@@ -2485,27 +2485,40 @@ def _analyze_terminal_input(user_input: str) -> str:
         )
 
     # ── 静默失败检测 ──
-    # 如果用户执行了 rm/unlink 等破坏性命令，且后续 ls 输出中目标文件仍存在
+    # 如果用户执行了 rm/unlink/find -delete 等破坏性命令，且后续 ls 输出中目标文件仍存在
     destructive_cmds = []
     for cmd_text, parts in executed_cmds:
         if parts[0] in {'rm', 'unlink', 'mv'} and len(parts) >= 2:
             target = parts[-1]  # rm -f nul → nul
             destructive_cmds.append((cmd_text, target))
+        elif parts[0] == 'find' and '-delete' in parts:
+            # find . -inum 524867 -delete → 目标隐含，取 ls_files 中之前已知的保留名/目标
+            # 作为代理，记录 find 本身，后续用「任何保留文件仍存在」来判定
+            destructive_cmds.append((cmd_text, '__find_delete__'))
+
+    # ── 先计算保留名（后续 silent_failures 需要用到）──
+    reserved_hits = [f for f in ls_files if f.lower() in _WIN_RESERVED]
 
     silent_failures = []
+    # 收集之前显式指定的删除目标（rm nul → nul）
+    prev_targets = {t for _, t in destructive_cmds if t != '__find_delete__'}
     for cmd_text, target in destructive_cmds:
-        if target in ls_files:
+        if target == '__find_delete__':
+            # find -delete 目标隐含，检查是否有任何已知保留名/目标仍存在
+            still_there = (prev_targets | set(reserved_hits)) & ls_files
+            for fname in still_there:
+                silent_failures.append(f'"{cmd_text}" 表面成功但 "{fname}" 仍在 ls 输出中')
+        elif target in ls_files:
             silent_failures.append(f'"{cmd_text}" 表面成功但 "{target}" 仍在 ls 输出中')
 
     # ── 注入段落 ──
     alerts = []
 
     # 1. Windows 保留名称
-    reserved_hits = [f for f in ls_files if f.lower() in _WIN_RESERVED]
     for fname in reserved_hits:
         alerts.append(
-            f'⚠️ [保留名] "{fname}" 是操作系统保留名称，rm/unlink 无法删除它。'
-            f'必须用特殊方法（如通过 inode 删除、从 Windows 侧删除、或使用 find -inum <inode> -delete）'
+            f'⚠️ [保留名] "{fname}" 是操作系统保留名称，常规 rm/unlink 无法删除。'
+            f'ls -i {fname} 获取 inode 后，用 find . -inum <数字> -delete（用实际数字替换）'
         )
 
     # 2. 静默失败
