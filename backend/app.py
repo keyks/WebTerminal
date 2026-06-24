@@ -2619,6 +2619,13 @@ def _sanitize_ai_reply(text: str) -> str:
     if not text:
         return text
 
+    # 0. 兜底：如果 AI 只返回了 ```commands 块而没有说明文字，自动补充
+    stripped = text.strip()
+    if stripped.startswith('```commands') or stripped.startswith('```command'):
+        cmds = _extract_commands(text)
+        cmd_str = ', '.join(cmds[:3]) if cmds else '(未知命令)'
+        text = f'执行以下命令：\n\n{text}'
+
     # 1. 去除「当前对话轮数：N」（中英文冒号均支持）
     text = _re.sub(r'\n?\s*当前对话轮数[：:]\s*\d+\s*$', '', text)
 
@@ -2716,12 +2723,15 @@ def api_ai_chat():
             f'\n'
             f'6. **不要编造解释**：不确定就说"不确定"，不要编造缓存/符号链接/inode 等理由。\n'
             f'\n'
-            f'7. **篇幅控制**：≤80 字，只给 1 条命令。\n'
+            f'7. **篇幅控制**：先简短说明（1-2句），再贴命令。总字数 ≤80，只给 1 条命令。\n'
             f'\n'
-            f'## 格式\n'
+            f'## 格式（必须严格遵循，先说明后命令）\n'
+            f'简短说明文字\n'
+            f'\n'
             f'```commands\n'
             f'完整的命令\n'
-            f'```'
+            f'```\n'
+            f'⚠️ 严禁只输出命令块不写说明文字！'
         )
 
         messages = [{'role': 'system', 'content': system_prompt}]
