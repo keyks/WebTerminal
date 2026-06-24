@@ -2403,7 +2403,87 @@ def _extract_commands(text: str) -> list:
         m = m.strip()
         if any(m.startswith(k) for k in keywords):
             cmds.append(m)
-    return list(dict.fromkeys(cmds))   # 去重保序
+    # 🔧 过滤不完整的命令（如只有 rm -i 没有文件名）
+    filtered = []
+    for cmd in cmds:
+        parts = cmd.strip().split()
+        if not parts:
+            continue
+        # 需要操作对象的命令：如果只有命令+选项没有目标，视为不完整
+        _needs_target = {
+            'rm', 'mv', 'cp', 'cat', 'less', 'more', 'head', 'tail',
+            'chmod', 'chown', 'touch', 'mkdir', 'rmdir', 'ln', 'unlink',
+            'file', 'stat', 'readlink', 'realpath', 'grep',
+        }
+        if parts[0] in _needs_target:
+            # 检查是否有非选项参数（不以 - 开头且不是选项标志）
+            has_target = any(
+                not p.startswith('-') and not p.startswith('--')
+                for p in parts[1:]
+            )
+            if not has_target:
+                continue  # 跳过不完整命令
+        filtered.append(cmd)
+
+    return list(dict.fromkeys(filtered))   # 去重保序
+
+def _analyze_terminal_input(user_input: str) -> str:
+    """检测用户消息中的终端输出，注入结构化分析帮助 LLM 理解
+
+    解决的问题：LLM 经常无视用户粘贴的命令输出，反复建议无效命令。
+    此函数检测到终端输出后，在消息前注入摘要，显式告知 LLM 关键事实。
+    """
+    import re as _re
+
+    # 检测终端提示符模式：xh@Ubuntu:~$ 或 root@server:~#
+    prompt_re = _re.compile(r'^\S+@\S+[:：]\S*[\$#]', _re.MULTILINE)
+    if not prompt_re.search(user_input):
+        return user_input  # 无终端输出，不注入
+
+    # 提取所有命令和关键输出行
+    lines = user_input.split('\n')
+    executed_cmds = []
+    key_outputs = []
+    prompt_seen = False
+    last_cmd = None
+
+    for line in lines:
+        m = prompt_re.match(line.strip())
+        if m:
+            prompt_seen = True
+            # 提取提示符后的命令
+            cmd = line.strip().split('$', 1)[-1].split('#', 1)[-1].strip()
+            if cmd and len(cmd) < 200:
+                executed_cmds.append(cmd)
+                last_cmd = cmd
+            continue
+
+        if prompt_seen:
+            stripped = line.strip()
+            if stripped and not prompt_re.match(stripped):
+                # 收集关键输出行（文件列表、错误信息等）
+                if _re.search(r'(cannot|error|not found|denied|invalid|unknown|missing)', stripped, _re.IGNORECASE):
+                    key_outputs.append(f'  错误: {stripped[:100]}')
+                elif _re.match(r'^[-drwx]{10}', stripped):
+                    key_outputs.append(f'  文件: {stripped[:100]}')
+
+    summary_parts = []
+    if executed_cmds:
+        cmd_list = ', '.join(executed_cmds[-4:])  # 取最近4条
+        summary_parts.append(f'最近执行: {cmd_list}')
+    if key_outputs:
+        summary_parts.append('\n'.join(key_outputs[-4:]))  # 取最近4个关键输出
+
+    if not summary_parts:
+        return user_input
+
+    injection = (
+        '[系统消息] 用户粘贴了终端输出，请仔细分析以下事实：\n'
+        + '\n'.join(summary_parts)
+        + '\n\n--- 用户原始消息 ---\n'
+    )
+    return injection + user_input
+
 
 def _sanitize_ai_reply(text: str) -> str:
     """后处理：清理 AI 回复中的元信息、重复命令块"""
@@ -2480,36 +2560,42 @@ def api_ai_chat():
                 pass
 
     system_prompt = (
-        f'你是一个资深 SRE 运维专家助手，集成在 WebTerminal 运维平台中。\n'
-        f'{"当前服务器状态：" + sys_context if sys_context else "（当前无活跃 SSH 连接）"}\n'
+        f'你是 WebTerminal 的终端运维助手。\n'
+        f'{"服务器：" + sys_context if sys_context else "（无 SSH 连接）"}\n'
         f'\n'
-        f'核心职责：\n'
-        f'1. 理解用户意图（诊断/操作/查询/解释）\n'
-        f'2. 将自然语言翻译为准确的 Linux 命令\n'
-        f'3. 对高危操作（rm -rf/格式化/改权限等）必须风险提示\n'
-        f'4. 引导用户逐步排查，每次只给 1-2 条最合适的命令\n'
+        f'## 核心规则（必须逐条遵守）\n'
         f'\n'
-        f'行为准则（必须遵守）：\n'
-        f'- 仔细阅读用户粘贴的命令输出，据此判断问题，不要凭空猜测\n'
-        f'- 如果用户执行了命令但无效，说明之前的建议有误，必须换个思路，绝不要重复建议同一条命令\n'
-        f'- 不要混淆文件名与系统路径：用户说的 "nul" 只是一个普通文件名，不是 /dev/null 设备\n'
-        f'- 一条命令绝不能在回复中出现超过一次\n'
-        f'- 当不确定时，诚实告诉用户并建议排查步骤，不要编造\n'
-        f'- 不要在回复末尾追加任何元信息（如对话轮数、时间戳等）\n'
+        f'1. **以用户终端输出为准**：用户会粘贴命令输出。你必须据此判断上一条命令是否成功。\n'
+        f'   错误示范：用户 ls 仍显示 nul 文件存在，你却说"已删除" → 严禁！\n'
         f'\n'
-        f'回复格式：\n'
-        f'- 用中文回复，简洁专业，字数控制在 200 字以内\n'
-        f'- 先给分析和建议，再给命令\n'
-        f'- 命令放在末尾的代码块中：\n'
+        f'2. **无效命令绝不重复**：如果你上一轮建议的命令没有达到预期效果，\n'
+        f'   必须换一个不同的方法。绝不要建议同一条命令第二次。\n'
+        f'   错误示范：rm nul 无效 → 再建议 rm nul → 再建议 rm -f nul → 严禁循环！\n'
+        f'   正确做法：rm 无效 → 换 unlink nul 或 find . -name nul -delete\n'
+        f'\n'
+        f'3. **命令必须完整**：每条命令必须包含所有必需的参数和操作对象。\n'
+        f'   错误示范：只给 "rm -i" 不带文件名 → 严禁！\n'
+        f'   正确示范：rm -i nul\n'
+        f'\n'
+        f'4. **不确定时诚实说"不确定"**：不要编造解释。\n'
+        f'   错误示范："可能是缓存问题" / "可能是 inode 问题" / "可能是符号链接" → 严禁编造！\n'
+        f'\n'
+        f'5. **篇幅控制**：每次回复不超过 100 字，只给 1 条最合适的命令。\n'
+        f'\n'
+        f'6. **不要输出元信息**：绝不在末尾追加"当前对话轮数"、时间戳等内容。\n'
+        f'\n'
+        f'## 回复格式\n'
+        f'简短分析 + 命令（放在 ```commands 代码块中）：\n'
         f'```commands\n'
-        f'单条命令\n'
-        f'```\n'
-        f'- 高危命令前加 ⚠️ 标记'
+        f'完整的命令\n'
+        f'```'
     )
 
     messages = [{'role': 'system', 'content': system_prompt}]
     messages.extend(conversation_manager.get_history_for_llm(chat_id))
-    messages.append({'role': 'user', 'content': user_input})
+    # 🔧 注入终端输出分析，帮助 LLM 理解命令执行结果
+    analyzed_input = _analyze_terminal_input(user_input)
+    messages.append({'role': 'user', 'content': analyzed_input})
 
     conversation_manager.add_message(chat_id, 'user', user_input)
 
@@ -2520,7 +2606,7 @@ def api_ai_chat():
             model=_aicfg['model'],
             api_key=_aicfg['api_key'],
             base_url=_aicfg['base_url'],
-            max_tokens=1000,
+            max_tokens=600,
             json_mode=False,
             timeout=60,
         )
