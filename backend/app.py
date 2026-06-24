@@ -2467,8 +2467,7 @@ def api_ai_chat():
         f'```commands\n'
         f'命令1\n'
         f'命令2\n'
-        f'高危操作在命令前加 ⚠️ 标记\n'
-        f'当前对话轮数：{len(conv.messages) + 1}'
+        f'高危操作在命令前加 ⚠️ 标记'
     )
 
     messages = [{'role': 'system', 'content': system_prompt}]

@@ -1386,8 +1386,7 @@ const AIAssistant = {
                                     min-height:42px;max-height:120px;"
                             onfocus="this.style.borderColor='var(--accent-color)';this.style.boxShadow='0 0 0 3px rgba(79,195,247,0.12)'"
                             onblur="this.style.borderColor='var(--border-color)';this.style.boxShadow='none'"></textarea>
-                    <button onclick="AIAssistant.sendMessage('${sessionId}')"
-                            id="chatSendBtn-${sessionId}"
+                    <button id="chatSendBtn-${sessionId}"
                             class="ai-send-btn"
                             title="发送 (Enter)">
                         <i class="fas fa-paper-plane"></i>
@@ -1778,10 +1777,32 @@ const AIAssistant = {
             return;
         }
 
-        // 🔧 high/medium 命令：仅调用后端 API 获取 AI 风险解释（展示用），
-        //    不再弹 confirm() — 统一由后端 terminal_input → command_requires_confirmation
-        //    → 安全确认弹窗处理，避免双重确认
+        // high/medium 命令：先弹确认弹窗，确认后再调用后端 API 二次校验
         if (riskLevel === 'high' || riskLevel === 'medium') {
+            const riskLabel = riskLevel === 'high' ? '⚠️ 高危' : '⚠️ 中危';
+            const confirmed = await new Promise(resolve => {
+                App.confirm(
+                    `<div style="text-align:left;line-height:1.7">
+                        <div style="font-size:14px;font-weight:600;color:var(--warning-color);margin-bottom:10px">
+                            <i class="fas fa-exclamation-triangle"></i> ${riskLabel}命令确认
+                        </div>
+                        <div style="margin-bottom:8px;color:var(--text-secondary);font-size:12px">
+                            您即将执行以下命令，请仔细确认：
+                        </div>
+                        <div style="background:var(--bg-primary);padding:10px 14px;border-radius:6px;border:1px solid var(--border-color);font-family:Consolas,monospace;font-size:13px;color:var(--text-bright);word-break:break-all;margin-bottom:8px;">
+                            ${App.escapeHtml(command)}
+                        </div>
+                        <div style="font-size:11px;color:var(--danger-color)">
+                            此命令被标记为高风险操作，执行后可能对系统造成影响。
+                        </div>
+                    </div>`,
+                    () => resolve(true),
+                    () => resolve(false)
+                );
+            });
+            if (!confirmed) return;
+
+            // 用户确认后，再调用后端 API 做二次安全校验
             try {
                 const res = await fetch('/api/ai/analyze-command', {
                     method: 'POST',
@@ -1791,19 +1812,16 @@ const AIAssistant = {
                 const data = await res.json();
                 if (data.status === 'ok') {
                     const backendRisk = data.data.risk;
-                    // 后端判定为 critical 则阻止执行（比前端规则更权威）
                     if (backendRisk.level === 'critical') {
                         const reason = backendRisk.reason || backendRisk.description || '';
                         App.toast(`⛔ 后端安全策略拦截\n原因：${reason}`, 'error');
                         return;
                     }
-                    // high/medium 不在此处确认 — 交给 terminal_input 统一处理
                     if (data.data.ai_explanation) {
                         App.toast(`🔍 AI 分析：${data.data.ai_explanation}`, 'info', 5000);
                     }
                 }
             } catch (e) {
-                // API 调用失败，不阻塞执行（后端 terminal_input 仍会做风险检查）
                 console.warn('[AI] 后端风险检查失败，将交由终端安全检查:', e);
             }
         }
@@ -2397,6 +2415,15 @@ const AIAssistant = {
                 const warn = t.startsWith('⚠️');
                 const risk = self._quickRiskCheck(cmd);
                 const cid  = self._regCmd(cmd);
+
+                // ⚠️ 警告注释行（非命令）：仅显示警告文本，不显示执行/复制按钮
+                if (warn && !self._looksLikeCommand(cmd)) {
+                    return `<div style="display:flex;align-items:center;gap:8px;padding:7px 12px;border-bottom:1px solid rgba(255,167,38,0.2);background:rgba(255,167,38,0.06);">
+                        <i class="fas fa-exclamation-triangle" style="color:var(--warning-color);font-size:11px;flex-shrink:0"></i>
+                        <code style="flex:1;font-family:Consolas,monospace;font-size:12px;color:var(--warning-color);word-break:break-all">${App.escapeHtml(cmd)}</code>
+                    </div>`;
+                }
+
                 const warnIcon = warn
                     ? '<i class="fas fa-exclamation-triangle" style="color:var(--warning-color);font-size:10px;flex-shrink:0"></i>'
                     : '<i class="fas fa-chevron-right" style="color:var(--success-color);font-size:8px;flex-shrink:0;opacity:.6"></i>';
