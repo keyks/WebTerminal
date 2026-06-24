@@ -2667,72 +2667,70 @@ def api_ai_chat():
     if not user_input:
         return jsonify({'status': 'error', 'message': '消息不能为空'}), 400
 
-    conv = conversation_manager.get_or_create(chat_id, session_id)
-
-    # 🔧 修复：会话创建时固定 sys_context，避免多用户竞争
-    sys_context = conversation_manager.get_context(chat_id).get('sys_context', '')
-    if not sys_context and session_id:
-        ssh_sess = ssh_manager.get_session(session_id)
-        if ssh_sess and ssh_sess.connected:
-            try:
-                info = ssh_sess.get_system_info()
-                sys_context = (
-                    f"当前服务器: {ssh_sess.conn_info.get('host', 'unknown')} | "
-                    f"CPU: {info.get('cpu_percent', 0)}% | "
-                    f"内存: {info.get('memory', {}).get('percent', 0)}% | "
-                    f"磁盘: {info.get('disk', {}).get('percent', 0)}%"
-                )
-                # 🔧 固定存储到会话上下文
-                conversation_manager.update_context(chat_id, 'sys_context', sys_context)
-            except Exception:
-                pass
-
-    system_prompt = (
-        f'你是 WebTerminal 的终端运维助手。\n'
-        f'{"服务器：" + sys_context if sys_context else "（无 SSH 连接）"}\n'
-        f'\n'
-        f'## 核心规则（必须逐条遵守）\n'
-        f'\n'
-        f'1. **以终端输出为准**：用户会粘贴命令输出，你必须据此判断上一条命令是否成功。\n'
-        f'   ✗ 用户 ls 仍显示 nul 存在，却说"已删除" → 严禁！\n'
-        f'\n'
-        f'2. **静默失败必须识别**：如果 rm/unlink 不报错但 ls 仍显示文件 → 这不是成功，\n'
-        f'   这是系统层拦截。必须立即停止建议删除命令，转而分析根因。\n'
-        f'\n'
-        f'3. **重复失败立即停止**：对同一文件尝试 2 种不同删除方法均失败 →\n'
-        f'   严禁再建议任何删除命令。直接告诉用户：文件被系统保护，常规手段无效。\n'
-        f'\n'
-        f'4. **Windows 保留名称**：nul、con、prn、aux、com1~com9、lpt1~lpt9\n'
-        f'   是操作系统保留名，常规 rm/unlink 无法删除。正确方法两步：\n'
-        f'   ① ls -i nul （获取 inode 号，如 12345）\n'
-        f'   ② find . -inum 12345 -delete （用数字替换 12345）\n'
-        f'   ⚠️ 严禁输出含 <inode> 或 <数字> 等占位符的命令！\n'
-        f'   必须输出第①步的 ls -i nul，等用户给 inode 后再给第②步。\n'
-        f'\n'
-        f'5. **命令必须完整、可直接执行**：\n'
-        f'   ✗ 含占位符 find . -inum <inode> → 用户复制粘贴会报错\n'
-        f'   ✗ 只给 "rm -i" 不带文件名\n'
-        f'   ✓ 命令中的所有值必须是字面量（数字/路径），不含 <> 括号\n'
-        f'\n'
-        f'6. **不要编造解释**：不确定就说"不确定"，不要编造缓存/符号链接/inode 等理由。\n'
-        f'\n'
-        f'7. **篇幅控制**：≤80 字，只给 1 条命令。\n'
-        f'\n'
-        f'## 格式\n'
-        f'```commands\n'
-        f'完整的命令\n'
-        f'```'
-    )
-
-    messages = [{'role': 'system', 'content': system_prompt}]
-    messages.extend(conversation_manager.get_history_for_llm(chat_id))
-    # 🔧 注入终端输出分析，帮助 LLM 理解命令执行结果
-    analyzed_input = _analyze_terminal_input(user_input)
-    messages.append({'role': 'user', 'content': analyzed_input})
-
-    conversation_manager.add_message(chat_id, 'user', user_input)
-
     try:
+        conv = conversation_manager.get_or_create(chat_id, session_id)
+
+        # 🔧 系统上下文
+        sys_context = conversation_manager.get_context(chat_id).get('sys_context', '')
+        if not sys_context and session_id:
+            ssh_sess = ssh_manager.get_session(session_id)
+            if ssh_sess and ssh_sess.connected:
+                try:
+                    info = ssh_sess.get_system_info()
+                    sys_context = (
+                        f"当前服务器: {ssh_sess.conn_info.get('host', 'unknown')} | "
+                        f"CPU: {info.get('cpu_percent', 0)}% | "
+                        f"内存: {info.get('memory', {}).get('percent', 0)}% | "
+                        f"磁盘: {info.get('disk', {}).get('percent', 0)}%"
+                    )
+                    conversation_manager.update_context(chat_id, 'sys_context', sys_context)
+                except Exception:
+                    pass
+
+        system_prompt = (
+            f'你是 WebTerminal 的终端运维助手。\n'
+            f'{"服务器：" + sys_context if sys_context else "（无 SSH 连接）"}\n'
+            f'\n'
+            f'## 核心规则（必须逐条遵守）\n'
+            f'\n'
+            f'1. **以终端输出为准**：用户会粘贴命令输出，你必须据此判断上一条命令是否成功。\n'
+            f'   ✗ 用户 ls 仍显示 nul 存在，却说"已删除" → 严禁！\n'
+            f'\n'
+            f'2. **静默失败必须识别**：如果 rm/unlink 不报错但 ls 仍显示文件 → 这不是成功，\n'
+            f'   这是系统层拦截。必须立即停止建议删除命令，转而分析根因。\n'
+            f'\n'
+            f'3. **重复失败立即停止**：对同一文件尝试 2 种不同删除方法均失败 →\n'
+            f'   严禁再建议任何删除命令。直接告诉用户：文件被系统保护，常规手段无效。\n'
+            f'\n'
+            f'4. **Windows 保留名称**：nul、con、prn、aux、com1~com9、lpt1~lpt9\n'
+            f'   是操作系统保留名，常规 rm/unlink 无法删除。正确方法两步：\n'
+            f'   ① ls -i nul （获取 inode 号，如 12345）\n'
+            f'   ② find . -inum 12345 -delete （用数字替换 12345）\n'
+            f'   ⚠️ 严禁输出含 <inode> 或 <数字> 等占位符的命令！\n'
+            f'   必须输出第①步的 ls -i nul，等用户给 inode 后再给第②步。\n'
+            f'\n'
+            f'5. **命令必须完整、可直接执行**：\n'
+            f'   ✗ 含占位符 find . -inum <inode> → 用户复制粘贴会报错\n'
+            f'   ✗ 只给 "rm -i" 不带文件名\n'
+            f'   ✓ 命令中的所有值必须是字面量（数字/路径），不含 <> 括号\n'
+            f'\n'
+            f'6. **不要编造解释**：不确定就说"不确定"，不要编造缓存/符号链接/inode 等理由。\n'
+            f'\n'
+            f'7. **篇幅控制**：≤80 字，只给 1 条命令。\n'
+            f'\n'
+            f'## 格式\n'
+            f'```commands\n'
+            f'完整的命令\n'
+            f'```'
+        )
+
+        messages = [{'role': 'system', 'content': system_prompt}]
+        messages.extend(conversation_manager.get_history_for_llm(chat_id))
+        analyzed_input = _analyze_terminal_input(user_input)
+        messages.append({'role': 'user', 'content': analyzed_input})
+
+        conversation_manager.add_message(chat_id, 'user', user_input)
+
         _aicfg = get_effective_ai_config()
         reply = call_groq_sync(
             messages=messages,
@@ -2744,14 +2742,11 @@ def api_ai_chat():
             timeout=60,
         )
 
-        # 🔧 防御：确保 reply 不是 None
         if not isinstance(reply, str):
             log.error(f'[AI Chat] 回复格式异常，期望 str，实际 {type(reply).__name__}')
             reply = str(reply) if reply is not None else '（AI 无响应）'
 
-        # 🔧 后处理：清理 AI 回复中的元信息和重复内容
         reply = _sanitize_ai_reply(reply)
-
         conversation_manager.add_message(chat_id, 'assistant', reply)
 
         commands = _extract_commands(reply)
@@ -2774,8 +2769,8 @@ def api_ai_chat():
             'message_count': len(conv.messages),
         })
     except Exception as e:
-        log.error(f'[AI Chat] 失败: {e}')
-        return jsonify({'status': 'error', 'message': str(e)}), 500
+        log.error(f'[AI Chat] 失败: {e}', exc_info=True)
+        return jsonify({'status': 'error', 'message': f'AI 服务异常: {str(e)}'}), 500
 
 
 @app.route('/api/ai/chat/history', methods=['GET'])

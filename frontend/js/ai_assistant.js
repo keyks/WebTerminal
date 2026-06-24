@@ -1683,6 +1683,14 @@ const AIAssistant = {
                     message,
                 }),
             });
+
+            // 🔧 防御：检测非 JSON 响应（Flask 崩溃返回 HTML 调试页）
+            const contentType = res.headers.get('content-type') || '';
+            if (!contentType.includes('application/json')) {
+                console.error('[AI Chat] 非 JSON 响应:', res.status, contentType);
+                throw new Error(`服务器异常 (HTTP ${res.status})，请稍后重试`);
+            }
+
             const data = await res.json();
 
             document.getElementById(loadingId)?.remove();
@@ -1695,7 +1703,13 @@ const AIAssistant = {
 
         } catch (e) {
             document.getElementById(loadingId)?.remove();
-            this._appendMessage(msgs, 'error', '网络错误: ' + e.message);
+            // 🔧 过滤掉技术性 JSON 解析错误，显示友好消息
+            const msg = e.message || '';
+            if (msg.includes('Unexpected token') || msg.includes('not valid JSON')) {
+                this._appendMessage(msgs, 'error', 'AI 服务暂时不可用，请稍后重试');
+            } else {
+                this._appendMessage(msgs, 'error', '网络错误: ' + msg);
+            }
         } finally {
             if (btnEl) {
                 btnEl.disabled = false;
