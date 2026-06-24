@@ -2428,61 +2428,165 @@ def _extract_commands(text: str) -> list:
     return list(dict.fromkeys(filtered))   # 去重保序
 
 def _analyze_terminal_input(user_input: str) -> str:
-    """检测用户消息中的终端输出，注入结构化分析帮助 LLM 理解
+    """检测用户消息中的终端输出，注入结构化分析，帮助 LLM 避免循环错误
 
-    解决的问题：LLM 经常无视用户粘贴的命令输出，反复建议无效命令。
-    此函数检测到终端输出后，在消息前注入摘要，显式告知 LLM 关键事实。
+    三层分析：
+    1. 静默失败检测：rm/unlink 无错误但 ls 仍显示文件 → 注入强烈警告
+    2. 重复失败计数：对同一文件尝试多种方法均失败 → 升级为根因分析
+    3. Windows 保留名称检测：nul/con/prn/aux/com1-9/lpt1-9 无法正常删除
     """
     import re as _re
 
-    # 检测终端提示符模式：xh@Ubuntu:~$ 或 root@server:~#
+    _WIN_RESERVED = {
+        'nul', 'con', 'prn', 'aux',
+        'com1', 'com2', 'com3', 'com4', 'com5', 'com6', 'com7', 'com8', 'com9',
+        'lpt1', 'lpt2', 'lpt3', 'lpt4', 'lpt5', 'lpt6', 'lpt7', 'lpt8', 'lpt9',
+    }
+
     prompt_re = _re.compile(r'^\S+@\S+[:：]\S*[\$#]', _re.MULTILINE)
     if not prompt_re.search(user_input):
-        return user_input  # 无终端输出，不注入
+        return user_input
 
-    # 提取所有命令和关键输出行
     lines = user_input.split('\n')
-    executed_cmds = []
-    key_outputs = []
     prompt_seen = False
-    last_cmd = None
+    executed_cmds = []       # [(cmd_text, parsed_parts)]
+    key_outputs = []         # "错误: ..." / "文件: ..."
+    ls_files = set()         # 从 ls 输出中提取到的所有文件名
+    current_episode_cmd = None  # 当前 episode 的命令
+    current_episode_outputs = []  # 当前 episode 的输出行
 
+    # ── 逐行解析 ──
     for line in lines:
         m = prompt_re.match(line.strip())
         if m:
+            # 上一个 episode 结束 → 分析其输出
+            if current_episode_cmd:
+                _analyze_episode(
+                    current_episode_cmd, current_episode_outputs,
+                    executed_cmds, key_outputs, ls_files,
+                )
+                current_episode_outputs = []
+
             prompt_seen = True
-            # 提取提示符后的命令
-            cmd = line.strip().split('$', 1)[-1].split('#', 1)[-1].strip()
-            if cmd and len(cmd) < 200:
-                executed_cmds.append(cmd)
-                last_cmd = cmd
+            cmd_text = line.strip().split('$', 1)[-1].split('#', 1)[-1].strip()
+            current_episode_cmd = cmd_text if cmd_text and len(cmd_text) < 200 else None
             continue
 
         if prompt_seen:
             stripped = line.strip()
             if stripped and not prompt_re.match(stripped):
-                # 收集关键输出行（文件列表、错误信息等）
-                if _re.search(r'(cannot|error|not found|denied|invalid|unknown|missing)', stripped, _re.IGNORECASE):
-                    key_outputs.append(f'  错误: {stripped[:100]}')
-                elif _re.match(r'^[-drwx]{10}', stripped):
-                    key_outputs.append(f'  文件: {stripped[:100]}')
+                current_episode_outputs.append(stripped)
 
-    summary_parts = []
-    if executed_cmds:
-        cmd_list = ', '.join(executed_cmds[-4:])  # 取最近4条
-        summary_parts.append(f'最近执行: {cmd_list}')
-    if key_outputs:
-        summary_parts.append('\n'.join(key_outputs[-4:]))  # 取最近4个关键输出
+    # 最后一个 episode
+    if current_episode_cmd:
+        _analyze_episode(
+            current_episode_cmd, current_episode_outputs,
+            executed_cmds, key_outputs, ls_files,
+        )
 
-    if not summary_parts:
+    # ── 静默失败检测 ──
+    # 如果用户执行了 rm/unlink 等破坏性命令，且后续 ls 输出中目标文件仍存在
+    destructive_cmds = []
+    for cmd_text, parts in executed_cmds:
+        if parts[0] in {'rm', 'unlink', 'mv'} and len(parts) >= 2:
+            target = parts[-1]  # rm -f nul → nul
+            destructive_cmds.append((cmd_text, target))
+
+    silent_failures = []
+    for cmd_text, target in destructive_cmds:
+        if target in ls_files:
+            silent_failures.append(f'"{cmd_text}" 表面成功但 "{target}" 仍在 ls 输出中')
+
+    # ── 注入段落 ──
+    alerts = []
+
+    # 1. Windows 保留名称
+    reserved_hits = [f for f in ls_files if f.lower() in _WIN_RESERVED]
+    for fname in reserved_hits:
+        alerts.append(
+            f'⚠️ [保留名] "{fname}" 是操作系统保留名称，rm/unlink 无法删除它。'
+            f'必须用特殊方法（如通过 inode 删除、从 Windows 侧删除、或使用 find -inum <inode> -delete）'
+        )
+
+    # 2. 静默失败
+    if silent_failures:
+        alerts.append('⚠️ [静默失败] 以下命令没有报错但文件仍在（需换思路）:')
+        for s in silent_failures[-3:]:
+            alerts.append(f'  - {s}')
+        # 如果目标也是保留名，强化
+        for fname in reserved_hits:
+            alerts.append(f'  → 结论: "{fname}" 无法被普通命令删除，OS 层面拦截')
+
+    # 3. 重复失败升级
+    if len(silent_failures) >= 2:
+        targets = set(t for _, t in destructive_cmds if t in ls_files)
+        for t in targets:
+            count = sum(1 for _, t2 in destructive_cmds if t2 == t)
+            if count >= 2:
+                alerts.append(
+                    f'🛑 [重复失败] 对 "{t}" 已尝试 {count} 种不同删除方法均失败。'
+                    f'请**停止建议新命令**，直接告诉用户这是系统层文件保护问题。'
+                )
+
+    if not alerts and not key_outputs:
+        # 纯命令但没有分析到的输出
+        if executed_cmds:
+            cmd_list = ', '.join(c[-1] for c in executed_cmds[-4:])
+            return f'[系统消息] 最近执行: {cmd_list}\n\n--- 用户原始消息 ---\n{user_input}'
         return user_input
 
+    # ── 标准输出 → 注入 ──
+    summary_parts = []
+    summary_parts.extend(alerts)
+    if executed_cmds and not alerts:
+        cmd_list = ', '.join(c[-1] for c in executed_cmds[-4:])
+        summary_parts.append(f'最近执行: {cmd_list}')
+    if key_outputs:
+        summary_parts.append('\n'.join(key_outputs[-4:]))
+
     injection = (
-        '[系统消息] 用户粘贴了终端输出，请仔细分析以下事实：\n'
+        '[系统消息] 以下是对用户终端输出的分析，请仔细阅读：\n'
         + '\n'.join(summary_parts)
         + '\n\n--- 用户原始消息 ---\n'
     )
     return injection + user_input
+
+
+def _analyze_episode(
+    cmd_text: str, outputs: list,
+    executed_cmds: list, key_outputs: list, ls_files: set,
+):
+    """分析一个命令→输出的 episode"""
+    import re as _re
+
+    parts = cmd_text.split()
+    if not parts:
+        return
+    executed_cmds.append((cmd_text, parts))
+
+    # 分类命令
+    cmd_name = parts[0]
+
+    for stripped in outputs:
+        # 错误行
+        if _re.search(r'(cannot|error|not found|denied|invalid|unknown|missing|No such file)', stripped, _re.IGNORECASE):
+            key_outputs.append(f'  错误: {stripped[:120]}')
+
+        # ls -l 输出
+        elif _re.match(r'^[-drwx]{10}', stripped):
+            key_outputs.append(f'  文件: {stripped[:120]}')
+            # 提取文件名（最后一列）
+            fname = stripped.split()[-1]
+            if fname and not fname.startswith('-'):
+                ls_files.add(fname)
+
+        # 普通 ls 输出（多列文件名）
+        elif cmd_name == 'ls' and ':' not in stripped and not _re.match(r'^\[', stripped):
+            # 按空白分割提取所有文件名
+            for token in stripped.split():
+                token = token.strip('/').strip(',')
+                if token and not token.startswith('-') and not token.startswith('\x1b'):
+                    ls_files.add(token)
 
 
 def _sanitize_ai_reply(text: str) -> str:
@@ -2565,27 +2669,27 @@ def api_ai_chat():
         f'\n'
         f'## 核心规则（必须逐条遵守）\n'
         f'\n'
-        f'1. **以用户终端输出为准**：用户会粘贴命令输出。你必须据此判断上一条命令是否成功。\n'
-        f'   错误示范：用户 ls 仍显示 nul 文件存在，你却说"已删除" → 严禁！\n'
+        f'1. **以终端输出为准**：用户会粘贴命令输出，你必须据此判断上一条命令是否成功。\n'
+        f'   ✗ 用户 ls 仍显示 nul 存在，却说"已删除" → 严禁！\n'
         f'\n'
-        f'2. **无效命令绝不重复**：如果你上一轮建议的命令没有达到预期效果，\n'
-        f'   必须换一个不同的方法。绝不要建议同一条命令第二次。\n'
-        f'   错误示范：rm nul 无效 → 再建议 rm nul → 再建议 rm -f nul → 严禁循环！\n'
-        f'   正确做法：rm 无效 → 换 unlink nul 或 find . -name nul -delete\n'
+        f'2. **静默失败必须识别**：如果 rm/unlink 不报错但 ls 仍显示文件 → 这不是成功，\n'
+        f'   这是系统层拦截。必须立即停止建议删除命令，转而分析根因。\n'
         f'\n'
-        f'3. **命令必须完整**：每条命令必须包含所有必需的参数和操作对象。\n'
-        f'   错误示范：只给 "rm -i" 不带文件名 → 严禁！\n'
-        f'   正确示范：rm -i nul\n'
+        f'3. **重复失败立即停止**：对同一文件尝试 2 种不同删除方法均失败 →\n'
+        f'   严禁再建议任何删除命令。直接告诉用户：文件被系统保护，常规手段无效。\n'
         f'\n'
-        f'4. **不确定时诚实说"不确定"**：不要编造解释。\n'
-        f'   错误示范："可能是缓存问题" / "可能是 inode 问题" / "可能是符号链接" → 严禁编造！\n'
+        f'4. **Windows 保留名称**：nul、con、prn、aux、com1~com9、lpt1~lpt9\n'
+        f'   是操作系统保留名，常规 rm/unlink 无法删除。必须建议：\n'
+        f'   find . -inum <inode> -delete  或  通过 Windows 资源管理器删除\n'
         f'\n'
-        f'5. **篇幅控制**：每次回复不超过 100 字，只给 1 条最合适的命令。\n'
+        f'5. **命令必须完整**：每条命令必须包含操作对象。\n'
+        f'   ✗ 只给 "rm -i" 不带文件名\n'
         f'\n'
-        f'6. **不要输出元信息**：绝不在末尾追加"当前对话轮数"、时间戳等内容。\n'
+        f'6. **不要编造解释**：不确定就说"不确定"，不要编造缓存/符号链接/inode 等理由。\n'
         f'\n'
-        f'## 回复格式\n'
-        f'简短分析 + 命令（放在 ```commands 代码块中）：\n'
+        f'7. **篇幅控制**：≤80 字，只给 1 条命令。\n'
+        f'\n'
+        f'## 格式\n'
         f'```commands\n'
         f'完整的命令\n'
         f'```'
