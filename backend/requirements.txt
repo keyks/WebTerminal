@@ -1,0 +1,43 @@
+# WebTerminal 后端依赖
+
+# 核心 Web 框架
+flask==3.0.0
+flask-socketio==5.3.6
+flask-cors==4.0.0
+flask-jwt-extended==4.6.0
+
+# SSH 连接与终端
+paramiko==3.4.0
+eventlet==0.35.1
+
+# 加密与安全
+cryptography==41.0.7
+
+# 系统监控
+psutil==5.9.7
+
+# 环境变量管理
+python-dotenv==1.0.0
+
+# 测试框架
+pytest==7.4.0
+
+# 异步任务队列
+celery==5.3.4
+# 任务队列Broker/缓存
+redis==5.0.1
+
+# Excel 报告导出
+openpyxl==3.1.2
+
+# 文件差异对比
+deepdiff==6.7.1
+
+# 文件变化监控
+watchdog==3.0.0
+
+# DNS 解析 (paramiko 的间接依赖)
+dnspython==2.4.2
+
+# AI API 客户端（OpenAI 兼容接口，同时支持 Groq/DeepSeek 等）
+openai>=1.0.0
