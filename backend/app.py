@@ -2555,7 +2555,7 @@ def _analyze_terminal_input(user_input: str) -> str:
     if not alerts and not key_outputs:
         # 纯命令但没有分析到的输出
         if executed_cmds:
-            cmd_list = ', '.join(c[-1] for c in executed_cmds[-4:])
+            cmd_list = ', '.join(c[0] for c in executed_cmds[-4:])
             return f'[系统消息] 最近执行: {cmd_list}\n\n--- 用户原始消息 ---\n{user_input}'
         return user_input
 
@@ -2563,7 +2563,7 @@ def _analyze_terminal_input(user_input: str) -> str:
     summary_parts = []
     summary_parts.extend(alerts)
     if executed_cmds and not alerts:
-        cmd_list = ', '.join(c[-1] for c in executed_cmds[-4:])
+        cmd_list = ', '.join(c[0] for c in executed_cmds[-4:])
         summary_parts.append(f'最近执行: {cmd_list}')
     if key_outputs:
         summary_parts.append('\n'.join(key_outputs[-4:]))
