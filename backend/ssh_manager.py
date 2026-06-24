@@ -42,6 +42,7 @@ class SSHSession:
 
         self._disconnecting = threading.Lock()  # 防止重复 disconnect
         self._disconnected = False  # 标记已断开
+        self._cached_os    = None   # 缓存 OS 类型，避免重复检测时创建 nul 文件
 
         self._extra_sftp_lock     = threading.Lock()
         self._extra_sftp_channels = []
@@ -501,17 +502,21 @@ class SSHSession:
     # ════════════════════════════════
 
     def _detect_os(self) -> str:
-        # 先检测 Windows（cmd /c ver 在 Windows 返回 "Microsoft Windows..."）
-        out, _ = self.execute_command('cmd /c ver 2>nul', timeout=5)
-        if 'Windows' in out or 'Microsoft' in out:
-            return 'windows'
-        # Unix 类系统
+        # 缓存：OS 类型连接期间不变，避免重复执行 cmd /c ver 2>nul
+        # 在 Linux 上该命令会因 shell 重定向创建字面量文件 "nul"
+        if self._cached_os:
+            return self._cached_os
+        # 先检测 Unix（uname 不会在 Linux 上产生副作用文件）
         out, _ = self.execute_command('uname -s 2>/dev/null', timeout=5)
         s = out.strip().lower()
-        if 'linux'  in s: return 'linux'
-        if 'darwin' in s: return 'macos'
-        if 'bsd'    in s: return 'bsd'
-        return 'unknown'
+        if 'linux'  in s: self._cached_os = 'linux';  return 'linux'
+        if 'darwin' in s: self._cached_os = 'macos';  return 'macos'
+        if 'bsd'    in s: self._cached_os = 'bsd';    return 'bsd'
+        # uname 无结果则检测 Windows
+        out, _ = self.execute_command('cmd /c ver 2>nul', timeout=5)
+        if 'Windows' in out or 'Microsoft' in out:
+            self._cached_os = 'windows'; return 'windows'
+        self._cached_os = 'unknown'; return 'unknown'
 
     def get_system_info(self) -> dict:
         info: dict = {}
