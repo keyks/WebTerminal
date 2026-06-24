@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.log
+.env
+*.db
+venv/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+
+# Data (数据库和日志)
+data/
+*.log
+
+# 导出文件（含敏感信息）
+exported_code.txt
+
+# 本地用户数据（含 SSH 连接信息）
+connections.json
+
+# 非项目脚本
+doct.py
+
+# Node (如果有)
+node_modules/
