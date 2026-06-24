@@ -3634,11 +3634,7 @@ const App = {
 
         if (matched.lvl === 'BLOCK') {
             this.toast('⛔ 极度危险命令已阻止: ' + matched.desc, 'error', 8000);
-            // 发送 Ctrl+C 取消当前行
-            if (this.socket) {
-                this.socket.emit('terminal_input', { session_id: sessionId, data: '\x03' });
-            }
-            return true;
+            return true; // 直接拦截，不发送任何内容到后端
         }
 
         // CONFIRM — 浏览器原生确认弹窗
@@ -3647,17 +3643,12 @@ const App = {
             '风险: ' + matched.desc + '\n\n' +
             '是否确认执行？';
         if (confirm(msg)) {
-            if (this.socket) {
-                this.socket.emit('terminal_input', { session_id: sessionId, data: '\r' });
-            }
             this.toast('✅ 命令已确认并发送', 'success');
+            return false; // 放行，让 onData 正常发送 \r
         } else {
-            if (this.socket) {
-                this.socket.emit('terminal_input', { session_id: sessionId, data: '\x03' });
-            }
             this.toast('❌ 命令已取消', 'info');
+            return true; // 拦截，不发送任何内容
         }
-        return true;
     },
 
     // ══════════════════════════════
