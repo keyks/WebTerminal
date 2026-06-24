@@ -158,6 +158,9 @@
             const rule = DCM._matchRule(cmd);
             if (!rule) return false;
 
+            console.log('[DCM v2] 命中规则 → level:' + rule.level +
+                ' desc:' + rule.desc + ' cmd:' + cmd);
+
             switch (rule.level) {
                 case LEVEL.CRITICAL:
                     DCM._blockCritical(sessionId, cmd, rule);
@@ -333,5 +336,13 @@
     //  挂载到全局
     // ═══════════════════════════════════════════════════════
     window.DangerousCommandManager = DCM;
+
+    // 🔧 初始化日志：确认 v2 规则引擎已加载
+    if (typeof console !== 'undefined') {
+        console.log('[DCM v2] 高危命令规则引擎已就绪 | 规则总数: ' + ALL_RULES.length +
+            ' (critical:' + CRITICAL_RULES.length +
+            ' high:' + HIGH_RULES.length +
+            ' medium:' + MEDIUM_RULES.length + ')');
+    }
 
 })();
