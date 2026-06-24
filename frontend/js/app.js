@@ -1497,18 +1497,40 @@ const App = {
 
             term.onData(data => {
                 const cleaned = data.replace(/\r\n/g, '\r').replace(/\n/g, '\r');
+                const _buf = (add) => { this._termBuffers[sessionId] = (this._termBuffers[sessionId] || '') + add; };
+                const _pop = () => { const b = this._termBuffers[sessionId] || ''; this._termBuffers[sessionId] = b.slice(0, -1); };
 
-                // ── Enter 键：命令风险检测（DCM + 内联降级双保险）──
-                if (cleaned === '\r') {
+                // ── 转义序列（箭头键等）：直通不缓冲 ──
+                if (cleaned.charCodeAt(0) === 0x1b) {
+                    this.socket.emit('terminal_input', { session_id: sessionId, data: cleaned });
+                    return;
+                }
+
+                // ── 批量输入含 Enter ──
+                const enterIdx = cleaned.lastIndexOf('\r');
+                if (enterIdx >= 0) {
+                    const before = cleaned.substring(0, enterIdx);
+                    const after = cleaned.substring(enterIdx + 1);
+
+                    for (let i = 0; i < before.length; i++) {
+                        const ch = before[i], code = ch.charCodeAt(0);
+                        if (ch === '\x7f' || ch === '\b') _pop();
+                        else if (code >= 0x20 && code <= 0x7E) _buf(ch);
+                    }
+
                     const cmd = (this._termBuffers[sessionId] || '').trim();
                     this._termBuffers[sessionId] = '';
                     console.log('[DCM TRACE] retrySession Enter | cmd="' + cmd + '" len=' + cmd.length);
                     if (this._checkDangerousCmd(sessionId, cmd)) {
                         console.log('[DCM TRACE] retrySession → 已拦截');
-                        return; // 命令被拦截（critical 阻止 / high 弹窗确认中）
+                        for (let i = 0; i < after.length; i++) {
+                            const ch = after[i], code = ch.charCodeAt(0);
+                            if (code >= 0x20 && code <= 0x7E) _buf(ch);
+                        }
+                        return;
                     }
                     console.log('[DCM TRACE] retrySession → 放行');
-                    this.socket.emit('terminal_input', { session_id: sessionId, data: '\r' });
+                    this.socket.emit('terminal_input', { session_id: sessionId, data: before + '\r' + after });
                     return;
                 }
 
@@ -1519,23 +1541,19 @@ const App = {
                     return;
                 }
 
-                // ── 退格键：删除缓冲区最后一个字符 ──
+                // ── 退格键 ──
                 if (cleaned === '\x7f' || cleaned === '\b') {
-                    const buf = this._termBuffers[sessionId] || '';
-                    this._termBuffers[sessionId] = buf.slice(0, -1);
+                    _pop();
                     this.socket.emit('terminal_input', { session_id: sessionId, data: cleaned });
                     return;
                 }
 
-                // ── 可打印 ASCII 单字符：添加到缓冲区 ──
-                if (cleaned.length === 1) {
-                    const code = cleaned.charCodeAt(0);
-                    if (code >= 0x20 && code <= 0x7E) {
-                        this._termBuffers[sessionId] = (this._termBuffers[sessionId] || '') + cleaned;
-                    }
+                // ── 可打印字符（含批量无 Enter）──
+                for (let i = 0; i < cleaned.length; i++) {
+                    const ch = cleaned[i], code = ch.charCodeAt(0);
+                    if (ch === '\x7f' || ch === '\b') _pop();
+                    else if (code >= 0x20 && code <= 0x7E) _buf(ch);
                 }
-                // 其他控制字符 / 转义序列 / 粘贴：不修改缓冲区，直接发送
-
                 this.socket.emit('terminal_input', { session_id: sessionId, data: cleaned });
             });
             term.onResize(s => {
@@ -4221,18 +4239,42 @@ const App = {
 
             term.onData(data => {
                 const cleaned = data.replace(/\r\n/g, '\r').replace(/\n/g, '\r');
+                const _buf = (add) => { this._termBuffers[sessionId] = (this._termBuffers[sessionId] || '') + add; };
+                const _pop = () => { const b = this._termBuffers[sessionId] || ''; this._termBuffers[sessionId] = b.slice(0, -1); };
 
-                // ── Enter 键：命令风险检测（DCM + 内联降级双保险）──
-                if (cleaned === '\r') {
+                // ── 转义序列（箭头键等）：直通不缓冲 ──
+                if (cleaned.charCodeAt(0) === 0x1b) {
+                    this.socket.emit('terminal_input', { session_id: sessionId, data: cleaned });
+                    return;
+                }
+
+                // ── 批量输入含 Enter ──
+                const enterIdx = cleaned.lastIndexOf('\r');
+                if (enterIdx >= 0) {
+                    const before = cleaned.substring(0, enterIdx);
+                    const after = cleaned.substring(enterIdx + 1);
+
+                    // 缓冲 \r 前的可打印字符/退格
+                    for (let i = 0; i < before.length; i++) {
+                        const ch = before[i], code = ch.charCodeAt(0);
+                        if (ch === '\x7f' || ch === '\b') _pop();
+                        else if (code >= 0x20 && code <= 0x7E) _buf(ch);
+                    }
+
                     const cmd = (this._termBuffers[sessionId] || '').trim();
                     this._termBuffers[sessionId] = '';
                     console.log('[DCM TRACE] createSessionUI Enter | cmd="' + cmd + '" len=' + cmd.length);
                     if (this._checkDangerousCmd(sessionId, cmd)) {
                         console.log('[DCM TRACE] createSessionUI → 已拦截');
-                        return; // 命令被拦截（critical 阻止 / high 弹窗确认中）
+                        // 拦截：缓冲 after 中的可打印字符（用户可能在等 toast 时又打了字）
+                        for (let i = 0; i < after.length; i++) {
+                            const ch = after[i], code = ch.charCodeAt(0);
+                            if (code >= 0x20 && code <= 0x7E) _buf(ch);
+                        }
+                        return;
                     }
                     console.log('[DCM TRACE] createSessionUI → 放行');
-                    this.socket.emit('terminal_input', { session_id: sessionId, data: '\r' });
+                    this.socket.emit('terminal_input', { session_id: sessionId, data: before + '\r' + after });
                     return;
                 }
 
@@ -4245,20 +4287,17 @@ const App = {
 
                 // ── 退格键 ──
                 if (cleaned === '\x7f' || cleaned === '\b') {
-                    const buf = this._termBuffers[sessionId] || '';
-                    this._termBuffers[sessionId] = buf.slice(0, -1);
+                    _pop();
                     this.socket.emit('terminal_input', { session_id: sessionId, data: cleaned });
                     return;
                 }
 
-                // ── 可打印 ASCII 单字符 ──
-                if (cleaned.length === 1) {
-                    const code = cleaned.charCodeAt(0);
-                    if (code >= 0x20 && code <= 0x7E) {
-                        this._termBuffers[sessionId] = (this._termBuffers[sessionId] || '') + cleaned;
-                    }
+                // ── 可打印字符（含批量无 Enter）──
+                for (let i = 0; i < cleaned.length; i++) {
+                    const ch = cleaned[i], code = ch.charCodeAt(0);
+                    if (ch === '\x7f' || ch === '\b') _pop();
+                    else if (code >= 0x20 && code <= 0x7E) _buf(ch);
                 }
-
                 this.socket.emit('terminal_input', { session_id: sessionId, data: cleaned });
             });
             term.onResize(s => {
