@@ -133,11 +133,26 @@
         },
 
         /**
+         * 获取本地预判匹配到的规则信息（首个命中者）
+         * @param {string} cmd
+         * @returns {object|null} {pattern, cat, note} 或 null
+         */
+        getLocalRiskInfo(cmd) {
+            if (!cmd || cmd.length < 2) return null;
+            for (const r of LOCAL_PRE_FILTER) {
+                if (r.pattern.test(cmd)) {
+                    return { cat: r.cat, note: r.note };
+                }
+            }
+            return null;
+        },
+
+        /**
          * 调用后端 API 分析命令风险，根据结果决定操作：
          *   critical → 阻止执行，发送 Ctrl+C 取消当前行
          *   high     → 弹出安全确认弹窗
          *   medium   → Toast 提醒 + 放行
-         *   low/safe → 直接放行
+         *   low/safe → 兜底：若本地预判命中，至少弹 toast；否则直接放行
          *
          * @param {string} sessionId - 终端会话 ID
          * @param {string} cmd       - 完整命令行
@@ -149,6 +164,9 @@
                 return;
             }
 
+            // 🔧 在 API 调用前记录本地预判信息，作为兜底
+            const _localRiskInfo = DCM.getLocalRiskInfo(cmd);
+
             fetch('/api/ai/analyze-command', {
                 method: 'POST',
                 headers: App.authHeaders(),
@@ -157,7 +175,7 @@
             .then(r => r.json())
             .then(result => {
                 if (result.status !== 'ok' || !result.data || !result.data.risk) {
-                    DCM._sendEnter(sessionId);
+                    DCM._fallbackOrSend(sessionId, cmd, _localRiskInfo);
                     return;
                 }
 
@@ -177,14 +195,42 @@
                         break;
 
                     default:
-                        DCM._sendEnter(sessionId);
+                        // 🔧 兜底：API 返回 low/safe 但本地预判命中 → 至少弹 toast 提醒
+                        DCM._fallbackOrSend(sessionId, cmd, _localRiskInfo);
                         break;
                 }
             })
             .catch(() => {
-                // API 异常时放行，避免阻塞正常操作
-                DCM._sendEnter(sessionId);
+                // 🔧 API 异常时如果本地预判命中 → 弹原生 confirm 兜底
+                if (_localRiskInfo) {
+                    DCM._handleHigh(sessionId, cmd, {
+                        level: 'high',
+                        description: _localRiskInfo.note,
+                        suggestion: 'API 暂时不可用，请仔细核对命令后再执行'
+                    });
+                } else {
+                    DCM._sendEnter(sessionId);
+                }
             });
+        },
+
+        /**
+         * 🔧 兜底逻辑：API 未识别但本地预判命中 → 至少弹 toast
+         */
+        _fallbackOrSend(sessionId, cmd, localRiskInfo) {
+            if (!localRiskInfo) {
+                DCM._sendEnter(sessionId);
+                return;
+            }
+            const App = window.App;
+            if (App) {
+                App.toast(
+                    '⚠️ 潜在风险操作: ' + localRiskInfo.note +
+                    ' — 请仔细核对命令: ' + cmd,
+                    'warning', 6000
+                );
+            }
+            DCM._sendEnter(sessionId);
         },
 
         // ── 工具方法 ────────────────────────────────────────
