@@ -70,7 +70,7 @@ def call_groq(params: dict) -> dict:
 
     api_key    = params['api_key']
     base_url   = params.get('base_url', '').strip()
-    model      = params.get('model', 'llama-3.3-70b-versatile')
+    model      = params.get('model', 'openai/gpt-oss-120b')
     messages   = params['messages']
     max_tokens = params.get('max_tokens', 1500)
     json_mode  = params.get('json_mode', False)
@@ -321,7 +321,7 @@ def main():
 
     api_key  = params.get('api_key', '')
     base_url = params.get('base_url', '').strip()
-    model    = params.get('model', 'llama-3.3-70b-versatile')
+    model    = params.get('model', 'openai/gpt-oss-120b')
 
     try:
         result = call_groq(params)

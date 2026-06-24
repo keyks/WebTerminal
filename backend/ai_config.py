@@ -249,7 +249,7 @@ def get_effective_ai_config() -> dict:
     user_baseurl = user.get('base_url', '').strip()
 
     final_key   = user_key or env_key
-    final_model = user_model or config.GROQ_MODEL.strip() or 'llama-3.3-70b-versatile'
+    final_model = user_model or config.GROQ_MODEL.strip() or 'openai/gpt-oss-120b'
     final_baseurl = user_baseurl or 'https://api.groq.com/openai/v1'
 
     # 诊断辅助：当本地存储的 Key 与 .env 不同时给出明确警告

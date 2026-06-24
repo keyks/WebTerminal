@@ -24,9 +24,9 @@ class GroqDiagnosticEngine:
 
         try:
             from config import config
-            self.model = model or getattr(config, 'GROQ_MODEL', 'llama-3.3-70b-versatile')
+            self.model = model or getattr(config, 'GROQ_MODEL', 'openai/gpt-oss-120b')
         except Exception:
-            self.model = model or 'llama-3.3-70b-versatile'
+            self.model = model or 'openai/gpt-oss-120b'
 
         self.command_timeout = 5   # 单条命令超时（秒）
         self.total_budget    = 35  # 上下文采集总预算（秒）

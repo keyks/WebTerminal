@@ -1278,7 +1278,7 @@ def api_ai_diagnose():
         input_data = {
             'api_key':    _api_key,
             'base_url':   ai_cfg['base_url'],
-            'model':      ai_cfg['model'] or 'llama-3.3-70b-versatile',
+            'model':      ai_cfg['model'] or 'openai/gpt-oss-120b',
             'messages': [
                 {
                     'role':    'system',

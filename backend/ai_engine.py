@@ -388,7 +388,7 @@ def call_groq_sync(
             f' ai_config.json: 未知'
         )
 
-    model = model or getattr(config, 'GROQ_MODEL', 'llama-3.3-70b-versatile')
+    model = model or getattr(config, 'GROQ_MODEL', 'openai/gpt-oss-120b')
 
     input_data = {
         'api_key':    api_key,
