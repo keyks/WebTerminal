@@ -1498,13 +1498,12 @@ const App = {
             term.onData(data => {
                 const cleaned = data.replace(/\r\n/g, '\r').replace(/\n/g, '\r');
 
-                // ── Enter 键：检查缓冲命令行风险 ──
+                // ── Enter 键：本地规则引擎检测风险（纯同步，无 API 依赖）──
                 if (cleaned === '\r') {
                     const cmd = (this._termBuffers[sessionId] || '').trim();
                     this._termBuffers[sessionId] = '';
-                    if (cmd && DangerousCommandManager.isPotentiallyRisky(cmd)) {
-                        DangerousCommandManager.analyzeAndPrompt(sessionId, cmd);
-                        return; // 暂不发送 \r，等待用户确认
+                    if (cmd && DangerousCommandManager.checkAndBlock(sessionId, cmd)) {
+                        return; // 命令被拦截（critical 阻止 / high 弹窗确认中）
                     }
                     this.socket.emit('terminal_input', { session_id: sessionId, data: '\r' });
                     return;
@@ -3556,10 +3555,11 @@ const App = {
     },
 
     /**
-     * 🔧 调用后端 API 分析风险 → 委托至 DangerousCommandManager
+     * 🔧 命令风险检测+拦截（纯本地规则引擎，无 API 依赖）
+     * 返回 true=已拦截，false=安全可执行
      */
     _checkTerminalRisk(sessionId, cmd) {
-        DangerousCommandManager.analyzeAndPrompt(sessionId, cmd);
+        return DangerousCommandManager.checkAndBlock(sessionId, cmd);
     },
 
     /**
@@ -3570,13 +3570,12 @@ const App = {
     },
 
     /**
-     * 🔧 终端手打命令风险确认弹窗 → 委托至 DangerousCommandManager（已被 analyzeAndPrompt 内联处理）
+     * 🔧 终端手打命令风险确认弹窗 → 已由 checkAndBlock 内联处理
+     *   v2 不再直接调用 DCM 内部方法，保留此包装以兼容旧调用路径
      */
     _showTerminalRiskConfirm(sessionId, cmd, risk) {
-        // 此方法已由 DangerousCommandManager.analyzeAndPrompt 内部处理，
-        // 保留此包装以兼容旧调用路径
-        const DCM = DangerousCommandManager;
-        DCM._handleHigh(sessionId, cmd, risk);
+        // v2：通过 checkAndBlock 重新检测（如果旧路径仍调用到此方法）
+        DangerousCommandManager.checkAndBlock(sessionId, cmd);
     },
 
     // ══════════════════════════════
@@ -4142,13 +4141,12 @@ const App = {
             term.onData(data => {
                 const cleaned = data.replace(/\r\n/g, '\r').replace(/\n/g, '\r');
 
-                // ── Enter 键：检查缓冲命令行风险 ──
+                // ── Enter 键：本地规则引擎检测风险（纯同步，无 API 依赖）──
                 if (cleaned === '\r') {
                     const cmd = (this._termBuffers[sessionId] || '').trim();
                     this._termBuffers[sessionId] = '';
-                    if (cmd && DangerousCommandManager.isPotentiallyRisky(cmd)) {
-                        DangerousCommandManager.analyzeAndPrompt(sessionId, cmd);
-                        return;
+                    if (cmd && DangerousCommandManager.checkAndBlock(sessionId, cmd)) {
+                        return; // 命令被拦截（critical 阻止 / high 弹窗确认中）
                     }
                     this.socket.emit('terminal_input', { session_id: sessionId, data: '\r' });
                     return;
