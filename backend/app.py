@@ -2517,7 +2517,18 @@ def _analyze_terminal_input(user_input: str) -> str:
         for fname in reserved_hits:
             alerts.append(f'  → 结论: "{fname}" 无法被普通命令删除，OS 层面拦截')
 
-    # 3. 重复失败升级
+    # 3. 占位符命令检测：用户粘贴了含 <...> 的命令（如 find . -inum <inode>）→ 你的锅
+    placeholder_re = _re.compile(r'<\w+>|<数字>|<[^>]+>')
+    for cmd_text, parts in executed_cmds:
+        if placeholder_re.search(cmd_text):
+            alerts.append(
+                f'🛑 [占位符命令] 用户执行了 "{cmd_text[:80]}" → '
+                f'你上一轮的输出含占位符（如 <inode>），用户直接复制粘贴了！'
+                f'请立即输出第一步具体命令，如：ls -i nul'
+            )
+            break  # 一条就够
+
+    # 4. 重复失败升级
     if len(silent_failures) >= 2:
         targets = set(t for _, t in destructive_cmds if t in ls_files)
         for t in targets:
@@ -2679,11 +2690,16 @@ def api_ai_chat():
         f'   严禁再建议任何删除命令。直接告诉用户：文件被系统保护，常规手段无效。\n'
         f'\n'
         f'4. **Windows 保留名称**：nul、con、prn、aux、com1~com9、lpt1~lpt9\n'
-        f'   是操作系统保留名，常规 rm/unlink 无法删除。必须建议：\n'
-        f'   find . -inum <inode> -delete  或  通过 Windows 资源管理器删除\n'
+        f'   是操作系统保留名，常规 rm/unlink 无法删除。正确方法两步：\n'
+        f'   ① ls -i nul （获取 inode 号，如 12345）\n'
+        f'   ② find . -inum 12345 -delete （用数字替换 12345）\n'
+        f'   ⚠️ 严禁输出含 <inode> 或 <数字> 等占位符的命令！\n'
+        f'   必须输出第①步的 ls -i nul，等用户给 inode 后再给第②步。\n'
         f'\n'
-        f'5. **命令必须完整**：每条命令必须包含操作对象。\n'
+        f'5. **命令必须完整、可直接执行**：\n'
+        f'   ✗ 含占位符 find . -inum <inode> → 用户复制粘贴会报错\n'
         f'   ✗ 只给 "rm -i" 不带文件名\n'
+        f'   ✓ 命令中的所有值必须是字面量（数字/路径），不含 <> 括号\n'
         f'\n'
         f'6. **不要编造解释**：不确定就说"不确定"，不要编造缓存/符号链接/inode 等理由。\n'
         f'\n'
