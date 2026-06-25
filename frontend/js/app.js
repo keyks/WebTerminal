@@ -3494,87 +3494,41 @@ const App = {
     toggleTheme() { this.applyTheme(this.theme === 'dark' ? 'light' : 'dark'); },
 
     // ══════════════════════════════
-    //  Modal 工具（保留用于确认弹窗）
+    //  Modal 工具（统一开关 + ESC + body 锁定）
     // ══════════════════════════════
-    openModal(id)  { document.getElementById(id)?.classList.add('visible'); },
+    openModal(id) {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.classList.add('visible');
+        document.body.classList.add('modal-open');
+
+        // ESC 键关闭（按 ID 独立管理，支持多个 modal 嵌套场景）
+        if (!this._modalEsc) this._modalEsc = {};
+        const handler = (e) => { if (e.key === 'Escape') this.closeModal(id); };
+        this._modalEsc[id] = handler;
+        document.addEventListener('keydown', handler);
+    },
     closeModal(id) {
-        document.getElementById(id)?.classList.remove('visible');
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.classList.remove('visible');
+
+        // 移除 ESC 处理器
+        if (this._modalEsc && this._modalEsc[id]) {
+            document.removeEventListener('keydown', this._modalEsc[id]);
+            delete this._modalEsc[id];
+        }
+
+        // 仅当没有其他 visible modal 时移除 body 锁定
+        if (!document.querySelector('.modal.visible')) {
+            document.body.classList.remove('modal-open');
+        }
+
+        // confirmModal 特殊处理：触发取消回调
         if (id === 'confirmModal' && this._confirmOnCancel) {
             const cb = this._confirmOnCancel;
             this._confirmOnCancel = null;
             cb();
-        }
-    },
-
-    /** 安全确认弹窗开关（.visible class + CSS transform 居中 + 动画重置） */
-    openSecurityConfirm() {
-        const backdrop = document.getElementById('securityConfirmBackdrop');
-        const modal    = document.getElementById('securityConfirmModal');
-
-        if (backdrop) {
-            backdrop.style.display = 'block';
-            backdrop.classList.add('visible');
-        }
-        if (modal) {
-            modal.style.display = 'flex';
-            modal.classList.add('visible');
-            // 清除内联 left/top（防止覆盖 CSS transform）
-            modal.style.left = '';
-            modal.style.top = '';
-            // 重置动画：强制回流后重新播放入场动画
-            modal.style.animation = 'none';
-            void modal.offsetWidth;
-            modal.style.animation = '';
-        }
-
-        document.body.classList.add('modal-open');
-
-        // ESC 键关闭
-        this._secEscHandler = (e) => {
-            if (e.key === 'Escape') this.closeSecurityConfirm();
-        };
-        document.addEventListener('keydown', this._secEscHandler);
-    },
-    closeSecurityConfirm() {
-        const backdrop = document.getElementById('securityConfirmBackdrop');
-        const modal    = document.getElementById('securityConfirmModal');
-
-        if (this._secEscHandler) {
-            document.removeEventListener('keydown', this._secEscHandler);
-            this._secEscHandler = null;
-        }
-
-        if (backdrop) {
-            backdrop.style.display = 'none';
-            backdrop.classList.remove('visible');
-        }
-        if (modal) {
-            modal.style.display = 'none';
-            modal.classList.remove('visible');
-            modal.style.left = '';
-            modal.style.top = '';
-        }
-
-        document.body.classList.remove('modal-open');
-    },
-
-    /** CSS transform 已完美居中；此方法仅做极端小屏边界保护 */
-    repositionSecurityConfirm() {
-        const modal = document.getElementById('securityConfirmModal');
-        if (!modal) return;
-
-        const vw = window.innerWidth;
-        const vh = window.innerHeight;
-
-        if (vw < 400) {
-            modal.style.maxWidth = '94vw';
-        } else {
-            modal.style.maxWidth = '';
-        }
-        if (vh < 500) {
-            modal.style.maxHeight = '88vh';
-        } else {
-            modal.style.maxHeight = '';
         }
     },
 
@@ -3595,17 +3549,19 @@ const App = {
     },
 
     /**
-     * 安全确认弹窗（高危命令二次确认）
+     * 安全确认弹窗（后端触发的高危命令二次确认）
+     * 使用统一 modal 体系，内容填充委托给 DCM 辅助方法
      * @param {Object} opts - { session_id, command, risk_level, score, description, suggestion, confirm_token, message }
      */
     _showSecurityConfirm(opts) {
         const modal = document.getElementById('securityConfirmModal');
         if (!modal) return;
 
+        const DCM = window.DangerousCommandManager;
         const lv = opts.risk_level || 'high';
         const cmd = opts.command || '';
 
-        // ── 填充数据 ──
+        // ── 填充数据（复用 DCM 内部样式逻辑）──
         const badge = document.getElementById('secRiskBadge');
         const label = document.getElementById('secRiskLabel');
         if (badge && label) {
@@ -3617,25 +3573,17 @@ const App = {
         }
 
         const catEl = document.getElementById('secCategory');
-        if (catEl) catEl.textContent = opts.description ? this._guessRiskCategory(opts.description) : '';
+        if (catEl) catEl.textContent = DCM ? DCM._guessCategory(opts.description || '') : (opts.description || '');
 
         document.getElementById('secCmdText').textContent = cmd;
         document.getElementById('secDescription').textContent = opts.description || '-';
         document.getElementById('secSuggestion').textContent = opts.suggestion || '请仔细核对命令后再执行';
 
-        // 影响分析
+        // 影响分析（复用 DCM 维度定义和分析方法）
         const dmgGrid = document.getElementById('secDmgGrid');
-        if (dmgGrid) {
-            const dimensions = [
-                { id: 'data_loss',    icon: 'fa-database',     label: '数据丢失' },
-                { id: 'permission',   icon: 'fa-key',          label: '权限变更' },
-                { id: 'sys_crash',    icon: 'fa-power-off',    label: '系统崩溃/中断' },
-                { id: 'svc_stop',     icon: 'fa-server',       label: '服务停止' },
-                { id: 'disk_destroy', icon: 'fa-hdd',          label: '磁盘/分区损坏' },
-                { id: 'sec_breach',   icon: 'fa-user-secret',  label: '安全漏洞' },
-            ];
-            const hits = this._analyzeRiskImpact(cmd);
-            dmgGrid.innerHTML = dimensions.map(dim => {
+        if (dmgGrid && DCM) {
+            const hits = DCM._analyzeImpact(cmd);
+            dmgGrid.innerHTML = DCM._IMPACT_DIMENSIONS.map(dim => {
                 const hit = hits.indexOf(dim.id) >= 0;
                 return '<div class="sec-dmg-item ' + (hit ? 'active' : 'inactive') + '">' +
                     '<i class="fas ' + dim.icon + ' sec-dmg-icon"></i>' +
@@ -3684,19 +3632,19 @@ const App = {
 
         // ── 绑定事件 ──
         const cancelBtn = document.getElementById('secCancelBtn');
-        const backdrop  = document.getElementById('securityConfirmBackdrop');
+        const overlay  = modal.querySelector('.modal-overlay');
 
         const cleanup = () => {
             if (cdTimer) clearInterval(cdTimer);
             if (this._secConfirmTimer) { clearTimeout(this._secConfirmTimer); this._secConfirmTimer = null; }
             if (confirmBtn) confirmBtn.replaceWith(confirmBtn.cloneNode(true));
             if (cancelBtn) cancelBtn.replaceWith(cancelBtn.cloneNode(true));
-            if (backdrop) backdrop.replaceWith(backdrop.cloneNode(true));
-            this.closeSecurityConfirm();
+            if (overlay) overlay.replaceWith(overlay.cloneNode(true));
+            this.closeModal('securityConfirmModal');
         };
 
-        // ── 打开弹窗（CSS transform 居中，无需 JS 定位）──
-        this.openSecurityConfirm();
+        // ── 打开弹窗（统一 modal 体系）──
+        this.openModal('securityConfirmModal');
 
         document.getElementById('secConfirmBtn').addEventListener('click', () => {
             if (!cdDone) return;
@@ -3715,9 +3663,10 @@ const App = {
             this.toast('❌ 命令已取消', 'info');
         });
 
-        // 点击遮罩关闭
-        if (backdrop) {
-            backdrop.addEventListener('click', () => {
+        // 点击遮罩关闭（仅点击遮罩本身，不冒泡自弹窗内部）
+        if (overlay) {
+            overlay.addEventListener('click', (e) => {
+                if (e.target !== overlay) return;
                 cleanup();
                 this.toast('❌ 命令已取消', 'info');
             });
@@ -3729,32 +3678,6 @@ const App = {
         }, 60000);
 
         setTimeout(startCd, 200);
-    },
-
-    /** 安全确认弹窗辅助：根据风险描述猜测操作类别 */
-    _guessRiskCategory(desc) {
-        const keys = {
-            '删除': '文件与目录操作', '格式化': '磁盘/文件系统操作', '清空': '数据销毁',
-            '修改': '权限与所有者变更', '关机': '电源与系统控制', '重启': '电源与系统控制',
-            '停机': '电源与系统控制', '分区': '磁盘管理', '防火墙': '网络安全',
-            '杀死': '进程管理', '粉碎': '数据销毁', '写入': '磁盘写入',
-            '覆盖': '数据销毁', '关停': '电源与系统控制',
-        };
-        for (const k in keys) { if (desc.indexOf(k) >= 0) return keys[k]; }
-        return '系统命令';
-    },
-
-    /** 安全确认弹窗辅助：分析命令涉及的潜在影响维度 */
-    _analyzeRiskImpact(cmd) {
-        const hits = [];
-        if (/\brm\b|shred|unlink|truncate|wipefs/.test(cmd))                        hits.push('data_loss');
-        if (/\bmkfs\b|mke2fs|fdisk|parted|dd\s+if=.*\/dev\//.test(cmd) ||
-            />\s*\/dev\/sd/.test(cmd))                                               hits.push('disk_destroy');
-        if (/\bchmod\s+-R\s+777|chmod\s+777\b|chown\s+-R/.test(cmd))               hits.push('permission');
-        if (/\bshutdown\b|reboot|halt|poweroff|init\s+[06]|kill\s+-9\b/.test(cmd)) hits.push('sys_crash');
-        if (/\bsystemctl\s+(stop|disable)\b/.test(cmd))                              hits.push('svc_stop');
-        if (/\biptables\s+-F|iptables\s+-X/.test(cmd))                               hits.push('sec_breach');
-        return hits.length ? hits : ['data_loss'];
     },
 
     /**

@@ -4,7 +4,16 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>WebTerminal - SSH终端管理器</title>
-    <link rel="stylesheet" href="css/style.css?v=310">
+    <!-- 🔧 防闪烁：CSS 加载前注入 data-theme，避免先暗后亮 -->
+    <script>
+    (function(){
+        var t = localStorage.getItem('wt_theme');
+        if (t === 'light' || (t === 'system' && window.matchMedia('(prefers-color-scheme: light)').matches)) {
+            document.documentElement.setAttribute('data-theme', 'light');
+        }
+    })();
+    </script>
+    <link rel="stylesheet" href="css/style.css?v=400">
     <link rel="stylesheet" href="/libs/xterm/xterm.min.css">
     <link rel="stylesheet" href="/libs/fontawesome/css/all.min.css">
     
@@ -377,7 +386,7 @@
                                 <div id="dashSysInfo" style="display:flex;flex-direction:column;gap:8px;">
                                     <div class="dash-info-row">
                                         <span class="dash-info-label">版本</span>
-                                        <span class="dash-info-val">WebTerminal v3.0</span>
+                                        <span class="dash-info-val">WebTerminal v4.0</span>
                                     </div>
                                     <div class="dash-info-row">
                                         <span class="dash-info-label">运行时间</span>
@@ -716,82 +725,84 @@
 <!-- ══════════════════════════════════
      安全审计确认弹窗（高危命令二次确认）
 ══════════════════════════════════ -->
-<div id="securityConfirmBackdrop"></div>
-<div id="securityConfirmModal">
-    <!-- ══════ Header：动画危险图标 ══════ -->
-    <div class="sec-hd">
-        <div class="sec-hd-ring">
-            <div class="sec-hd-core">
-                <i class="fas fa-skull-crossbones"></i>
+<div class="modal" id="securityConfirmModal">
+    <div class="modal-overlay"></div>
+    <div class="modal-dialog sec-dialog">
+        <!-- ══════ Header：动画危险图标 ══════ -->
+        <div class="sec-hd">
+            <div class="sec-hd-ring">
+                <div class="sec-hd-core">
+                    <i class="fas fa-skull-crossbones"></i>
+                </div>
+                <svg class="sec-hd-svg" viewBox="0 0 100 100">
+                    <circle cx="50" cy="50" r="46" fill="none" class="sec-hd-track" />
+                    <circle cx="50" cy="50" r="46" fill="none" class="sec-hd-arc" id="secHdArc" />
+                </svg>
             </div>
-            <svg class="sec-hd-svg" viewBox="0 0 100 100">
-                <circle cx="50" cy="50" r="46" fill="none" class="sec-hd-track" />
-                <circle cx="50" cy="50" r="46" fill="none" class="sec-hd-arc" id="secHdArc" />
-            </svg>
-        </div>
-        <h3 class="sec-hd-title">高危命令安全确认</h3>
-        <p class="sec-hd-sub" id="secHdSub">系统已拦截该命令，需二次确认后方可执行</p>
-    </div>
-
-    <!-- ══════ Body ══════ -->
-    <div class="sec-bd">
-        <!-- 风险徽章 + 等级 -->
-        <div class="sec-badge-row">
-            <div class="sec-badge" id="secRiskBadge">
-                <i class="fas fa-shield-virus"></i>
-                <span id="secRiskLabel">HIGH</span>
-            </div>
-            <span class="sec-category" id="secCategory"></span>
+            <h3 class="sec-hd-title">高危命令安全确认</h3>
+            <p class="sec-hd-sub" id="secHdSub">系统已拦截该命令，需二次确认后方可执行</p>
         </div>
 
-        <!-- 命令展示区（带高亮）-->
-        <div class="sec-cmd-block">
-            <div class="sec-cmd-hd">
-                <i class="fas fa-terminal"></i>
-                <span>拟执行命令</span>
+        <!-- ══════ Body ══════ -->
+        <div class="sec-bd">
+            <!-- 风险徽章 + 等级 -->
+            <div class="sec-badge-row">
+                <div class="sec-badge" id="secRiskBadge">
+                    <i class="fas fa-shield-virus"></i>
+                    <span id="secRiskLabel">HIGH</span>
+                </div>
+                <span class="sec-category" id="secCategory"></span>
             </div>
-            <div class="sec-cmd-wrap">
-                <span class="sec-cmd-ps">$</span>
-                <code class="sec-cmd-txt" id="secCmdText"></code>
+
+            <!-- 命令展示区（带高亮）-->
+            <div class="sec-cmd-block">
+                <div class="sec-cmd-hd">
+                    <i class="fas fa-terminal"></i>
+                    <span>拟执行命令</span>
+                </div>
+                <div class="sec-cmd-wrap">
+                    <span class="sec-cmd-ps">$</span>
+                    <code class="sec-cmd-txt" id="secCmdText"></code>
+                </div>
+            </div>
+
+            <!-- 影响维度分析 -->
+            <div class="sec-dmg" id="secDmgPanel">
+                <div class="sec-dmg-title">
+                    <i class="fas fa-radiation-alt"></i> 潜在影响
+                </div>
+                <div class="sec-dmg-grid" id="secDmgGrid"></div>
+            </div>
+
+            <!-- 详情描述 -->
+            <div class="sec-infos">
+                <div class="sec-info">
+                    <i class="fas fa-exclamation-circle"></i>
+                    <div><span class="sec-info-lbl">风险描述</span><span class="sec-info-v" id="secDescription"></span></div>
+                </div>
+                <div class="sec-info">
+                    <i class="fas fa-lightbulb"></i>
+                    <div><span class="sec-info-lbl">安全建议</span><span class="sec-info-v" id="secSuggestion"></span></div>
+                </div>
+            </div>
+
+            <!-- 倒计时条 -->
+            <div class="sec-cd" id="secCountdown">
+                <div class="sec-cd-bar"><div class="sec-cd-fill" id="secCdFill"></div></div>
+                <span class="sec-cd-txt" id="secCdText">请等待 <strong id="secCdNum">3</strong> 秒后再确认</span>
             </div>
         </div>
 
-        <!-- 影响维度分析 -->
-        <div class="sec-dmg" id="secDmgPanel">
-            <div class="sec-dmg-title">
-                <i class="fas fa-radiation-alt"></i> 潜在影响
-            </div>
-            <div class="sec-dmg-grid" id="secDmgGrid"></div>
+        <!-- ══════ Footer ══════ -->
+        <div class="sec-ft">
+            <button class="sec-btn-ccl" id="secCancelBtn">
+                <i class="fas fa-times"></i> 取消执行
+            </button>
+            <button class="sec-btn-ok" id="secConfirmBtn" disabled>
+                <i class="fas fa-skull"></i>
+                <span id="secConfirmLabel">我了解风险，执行命令</span>
+            </button>
         </div>
-
-        <!-- 详情描述 -->
-        <div class="sec-infos">
-            <div class="sec-info">
-                <i class="fas fa-exclamation-circle"></i>
-                <div><span class="sec-info-lbl">风险描述</span><span class="sec-info-v" id="secDescription"></span></div>
-            </div>
-            <div class="sec-info">
-                <i class="fas fa-lightbulb"></i>
-                <div><span class="sec-info-lbl">安全建议</span><span class="sec-info-v" id="secSuggestion"></span></div>
-            </div>
-        </div>
-
-        <!-- 倒计时条 -->
-        <div class="sec-cd" id="secCountdown">
-            <div class="sec-cd-bar"><div class="sec-cd-fill" id="secCdFill"></div></div>
-            <span class="sec-cd-txt" id="secCdText">请等待 <strong id="secCdNum">3</strong> 秒后再确认</span>
-        </div>
-    </div>
-
-    <!-- ══════ Footer ══════ -->
-    <div class="sec-ft">
-        <button class="sec-btn-ccl" id="secCancelBtn">
-            <i class="fas fa-times"></i> 取消执行
-        </button>
-        <button class="sec-btn-ok" id="secConfirmBtn" disabled>
-            <i class="fas fa-skull"></i>
-            <span id="secConfirmLabel">我了解风险，执行命令</span>
-        </button>
     </div>
 </div>
 
@@ -913,11 +924,11 @@
 <script src="js/filemanager.js?v=305"></script>
 <script src="js/monitor.js?v=305"></script>
 <script src="js/commands.js?v=309"></script>
-<script src="js/dangerous_commands.js?v=310"></script>
+<script src="js/dangerous_commands.js?v=316"></script>
 <script src="js/alerts.js?v=309"></script>
 <script src="js/cluster.js?v=309"></script>
-<script src="js/app.js?v=310"></script>
-<script src="/js/ai_assistant.js?v=310"></script>
+<script src="js/app.js?v=316"></script>
+<script src="/js/ai_assistant.js?v=316"></script>
 
 <!-- 🔧 DCM v2 加载自检：页面加载后自动验证 -->
 <script>

@@ -1,6 +1,6 @@
 /**
  * ═══════════════════════════════════════════════════════════
- * 高危指令管理模块 (Dangerous Command Manager) v2
+ * 高危指令管理模块 (Dangerous Command Manager) v3.2
  * ═══════════════════════════════════════════════════════════
  *
  * 纯本地规则引擎，零 API 依赖，实时同步响应：
@@ -14,6 +14,13 @@
  *   → 返回 false 表示安全，调用方自行发送 \r
  *
  * 规则排列规则：specific（critical）→ generic（medium），先匹配先生效
+ *
+ * 可检测性改进：
+ *   1. 弹窗状态通过 data-* 属性暴露，可被 DOM 查询
+ *   2. 弹窗位置通过 CSS 变量暴露，可被 getComputedStyle 读取
+ *   3. 弹窗生命周期事件通过 CustomEvent 派发，可被监听
+ *   4. 弹窗 DOM 使用固定 ID 和 class，可被选择器定位
+ *   5. 提供调试 API 供开发工具使用
  *
  * 依赖：window.App (toast, socket, openModal, closeModal)
  *      DOM: #securityConfirmModal 弹窗元素
@@ -136,6 +143,41 @@
     //  内部状态
     // ═══════════════════════════════════════════════════════
     let _confirmTimer = null;
+    let _state = 'idle';                // idle | active | ready | closed
+    let _lastCheck = null;              // { sessionId, cmd, rule, timestamp }
+    let _activeSessionId = null;
+
+    // ── CustomEvent 派发工具 ─────────────────────────────
+    const _dispatch = (name, detail) => {
+        window.dispatchEvent(new CustomEvent(name, {
+            detail: Object.assign({ timestamp: Date.now() }, detail),
+            bubbles: false
+        }));
+    };
+
+    // ── data-* 状态同步 ──────────────────────────────────
+    const _setState = (newState) => {
+        _state = newState;
+        const modal = document.getElementById('securityConfirmModal');
+        if (modal) modal.setAttribute('data-dcm-state', newState);
+    };
+
+    // ── CSS 变量同步（位置信息）──────────────────────────
+    const _syncCssVars = () => {
+        const modal = document.getElementById('securityConfirmModal');
+        if (!modal || _state === 'idle' || _state === 'closed') return;
+        const rect = modal.getBoundingClientRect();
+        const dialog = modal.querySelector('.modal-dialog');
+        const dRect = dialog ? dialog.getBoundingClientRect() : rect;
+        modal.style.setProperty('--dcm-modal-top',    rect.top + 'px');
+        modal.style.setProperty('--dcm-modal-left',   rect.left + 'px');
+        modal.style.setProperty('--dcm-modal-width',  rect.width + 'px');
+        modal.style.setProperty('--dcm-modal-height', rect.height + 'px');
+        modal.style.setProperty('--dcm-dialog-top',    dRect.top + 'px');
+        modal.style.setProperty('--dcm-dialog-left',   dRect.left + 'px');
+        modal.style.setProperty('--dcm-dialog-width',  dRect.width + 'px');
+        modal.style.setProperty('--dcm-dialog-height', dRect.height + 'px');
+    };
 
     // ═══════════════════════════════════════════════════════
     //  公共 API
@@ -234,6 +276,8 @@
 
         /** critical：阻止执行，发送 Ctrl+C 取消当前行 */
         _blockCritical(sessionId, cmd, rule) {
+            _lastCheck = { sessionId, cmd, rule, timestamp: Date.now() };
+            _dispatch('dcm:command:blocked', { sessionId, cmd, rule, level: 'critical' });
             const App = window.App;
             if (App) {
                 App.toast('⛔ 极度危险命令已阻止: ' + rule.desc,
@@ -247,15 +291,24 @@
             const App = window.App;
             const lv = rule.level || 'high';
 
+            _activeSessionId = sessionId;
+            _lastCheck = { sessionId, cmd, rule, timestamp: Date.now() };
+
             // ── 降级：无 App 或 Modal ──
             if (!App || !document.getElementById('securityConfirmModal')) {
                 if (confirm('⚠️ 高危命令:\n\n' + cmd + '\n\n风险: ' + rule.desc + '\n\n是否确认执行？')) {
                     if (App) App.toast('✅ 命令已确认并发送', 'success');
+                    _dispatch('dcm:modal:confirm', { sessionId, cmd, rule });
                     return false;
                 }
                 if (App) App.toast('❌ 命令已取消', 'info');
+                _dispatch('dcm:modal:cancel', { sessionId, cmd, rule });
                 return true;
             }
+
+            // ── 0. 设置 data-* 状态 ──
+            const modal = document.getElementById('securityConfirmModal');
+            _setState('active');
 
             // ── 1. 设置风险徽章 ──
             const badge = document.getElementById('secRiskBadge');
@@ -282,13 +335,14 @@
             const suggEl = document.getElementById('secSuggestion');
             if (suggEl) suggEl.textContent = (rule.sugg || '请仔细核对命令后再执行');
 
-            // ── 4. 影响分析 ──
+            // ── 4. 影响分析（设置影响 data 属性）──
             const dmgGrid = document.getElementById('secDmgGrid');
             if (dmgGrid) {
                 const impacts = DCM._analyzeImpact(cmd);
+                dmgGrid.setAttribute('data-dcm-impacts', impacts.join(','));
                 dmgGrid.innerHTML = DCM._IMPACT_DIMENSIONS.map(dim => {
                     const hit = impacts.indexOf(dim.id) >= 0;
-                    return '<div class="sec-dmg-item ' + (hit ? 'active' : 'inactive') + '">' +
+                    return '<div class="sec-dmg-item ' + (hit ? 'active' : 'inactive') + '" data-impact="' + dim.id + '">' +
                         '<i class="fas ' + dim.icon + ' sec-dmg-icon"></i>' +
                         '<span>' + dim.label + '</span></div>';
                 }).join('');
@@ -307,19 +361,34 @@
             const cdText = document.getElementById('secCdText');
             const confirmBtn = document.getElementById('secConfirmBtn');
             const confirmLabel = document.getElementById('secConfirmLabel');
+            const cmdPreview = document.getElementById('secCmdText');
             let cdTimer = null, cdLeft = CD_SEC, cdDone = false;
+
+            // 倒计时区域暴露 data-* 属性
+            const cdWrap = document.getElementById('secCountdown');
+            if (cdWrap) {
+                cdWrap.setAttribute('data-dcm-cd-total', String(CD_SEC));
+                cdWrap.setAttribute('data-dcm-cd-left', String(CD_SEC));
+            }
 
             const updateCdUI = (left) => {
                 const pct = (left / CD_SEC) * 100;
                 if (cdBar)  cdBar.style.width = pct + '%';
                 if (cdNum)  cdNum.textContent = String(left);
                 if (cdText) cdText.innerHTML = '请等待 <strong id="secCdNum">' + left + '</strong> 秒后再确认';
+                if (cdWrap) cdWrap.setAttribute('data-dcm-cd-left', String(left));
+                _dispatch('dcm:countdown:tick', { remaining: left, total: CD_SEC });
             };
             updateCdUI(CD_SEC);
 
             if (confirmBtn && confirmLabel) {
                 confirmBtn.disabled = true;
+                confirmBtn.setAttribute('data-dcm-ready', 'false');
                 confirmLabel.textContent = '我了解风险，执行命令';
+            }
+
+            if (cmdPreview) {
+                cmdPreview.setAttribute('data-dcm-cmd', cmd);
             }
 
             const startCd = () => {
@@ -329,34 +398,53 @@
                     if (cdLeft <= 0) {
                         clearInterval(cdTimer);
                         cdDone = true;
+                        _setState('ready');
                         if (cdBar)  cdBar.style.width = '0%';
                         if (cdText) cdText.innerHTML = '<i class="fas fa-check-circle" style="color:#4caf50;"></i> 请再次确认后点击执行';
                         if (confirmBtn) {
                             confirmBtn.disabled = false;
+                            confirmBtn.setAttribute('data-dcm-ready', 'true');
                             confirmBtn.focus();
                         }
+                        if (cdWrap) cdWrap.setAttribute('data-dcm-cd-left', '0');
+                        _dispatch('dcm:countdown:done', {});
+                        _syncCssVars();
                     }
                 }, 1000);
             };
 
             // ── 7. 事件绑定 & cleanup ──
             const cancelBtn = document.getElementById('secCancelBtn');
-            const backdrop  = document.getElementById('securityConfirmBackdrop');
+            const overlay   = modal ? modal.querySelector('.modal-overlay') : null;
 
-            const cleanup = () => {
+            const cleanup = (reason) => {
+                _setState('closed');
                 if (cdTimer) clearInterval(cdTimer);
                 DCM._clearTimer();
                 if (confirmBtn) confirmBtn.replaceWith(confirmBtn.cloneNode(true));
                 if (cancelBtn) cancelBtn.replaceWith(cancelBtn.cloneNode(true));
-                if (backdrop) backdrop.replaceWith(backdrop.cloneNode(true));
-                App.closeSecurityConfirm();
+                if (overlay) overlay.replaceWith(overlay.cloneNode(true));
+                App.closeModal('securityConfirmModal');
+                // 清除 CSS 变量
+                if (modal) {
+                    modal.style.removeProperty('--dcm-modal-top');
+                    modal.style.removeProperty('--dcm-modal-left');
+                    modal.style.removeProperty('--dcm-modal-width');
+                    modal.style.removeProperty('--dcm-modal-height');
+                    modal.style.removeProperty('--dcm-dialog-top');
+                    modal.style.removeProperty('--dcm-dialog-left');
+                    modal.style.removeProperty('--dcm-dialog-width');
+                    modal.style.removeProperty('--dcm-dialog-height');
+                }
+                _setState('idle');
+                _activeSessionId = null;
+                _dispatch('dcm:modal:close', { sessionId, cmd, rule, reason: reason || 'unknown' });
             };
-
-            console.log('[SecModal] DCM path _showConfirm triggering', { command: cmd, level: lv });
 
             document.getElementById('secConfirmBtn').addEventListener('click', () => {
                 if (!cdDone) return; // 倒计时未完成，忽略点击
-                cleanup();
+                _dispatch('dcm:modal:confirm', { sessionId, cmd, rule });
+                cleanup('confirm');
                 App.socket.emit('terminal_input', {
                     session_id: sessionId,
                     data: cmd + '\r'
@@ -365,36 +453,42 @@
             });
 
             document.getElementById('secCancelBtn').addEventListener('click', () => {
-                cleanup();
+                _dispatch('dcm:modal:cancel', { sessionId, cmd, rule });
+                cleanup('cancel');
                 App.toast('❌ 命令已取消', 'info');
             });
 
-            // 点击遮罩关闭
-            if (backdrop) {
-                backdrop.addEventListener('click', () => {
-                    cleanup();
+            // 点击遮罩关闭（仅点击遮罩本身，不冒泡自弹窗内部）
+            if (overlay) {
+                overlay.addEventListener('click', (e) => {
+                    if (e.target !== overlay) return;
+                    _dispatch('dcm:modal:cancel', { sessionId, cmd, rule });
+                    cleanup('overlay');
                     App.toast('❌ 命令已取消', 'info');
                 });
             }
 
             // 60 秒超时（从打开弹窗起算）
             _confirmTimer = setTimeout(() => {
-                cleanup();
+                _dispatch('dcm:modal:timeout', { sessionId, cmd, rule });
+                cleanup('timeout');
                 App.toast('⏰ 确认超时，请重新执行命令', 'warning');
             }, 60000);
 
-            // ── 打开弹窗（CSS transform 居中，无需 JS 定位）──
-            console.log('[SecModal] Calling App.openSecurityConfirm() [DCM path]');
-            if (App && typeof App.openSecurityConfirm === 'function') {
-                App.openSecurityConfirm();
-            }
+            // ── 派发打开事件 & 打开弹窗（统一 modal 体系）──
+            _dispatch('dcm:modal:open', { sessionId, cmd, rule, level: lv });
+            App.openModal('securityConfirmModal');
 
-            // 延迟校准（极端小屏适配）
-            setTimeout(() => {
-                if (App && typeof App.repositionSecurityConfirm === 'function') {
-                    App.repositionSecurityConfirm();
+            // 弹窗打开后同步 CSS 变量位置
+            requestAnimationFrame(() => {
+                _syncCssVars();
+                // ResizeObserver：弹窗尺寸变化时自动更新 CSS 变量
+                if (window._dcmResizeObserver) window._dcmResizeObserver.disconnect();
+                if (modal && window.ResizeObserver) {
+                    window._dcmResizeObserver = new ResizeObserver(() => _syncCssVars());
+                    window._dcmResizeObserver.observe(modal);
                 }
-            }, 100);
+            });
 
             // 打开后启动倒计时
             setTimeout(startCd, 200);
@@ -405,6 +499,8 @@
 
         /** medium：Toast 警告后放行 */
         _warnAndPass(sessionId, cmd, rule) {
+            _lastCheck = { sessionId, cmd, rule, timestamp: Date.now() };
+            _dispatch('dcm:command:warned', { sessionId, cmd, rule, level: 'medium' });
             const App = window.App;
             if (App) {
                 App.toast(
@@ -526,5 +622,178 @@
     //  挂载到全局
     // ═══════════════════════════════════════════════════════
     window.DangerousCommandManager = DCM;
+
+    // ═══════════════════════════════════════════════════════
+    //  调试 API (window.DCM_DEBUG)
+    // ═══════════════════════════════════════════════════════
+    window.DCM_DEBUG = {
+        /** 获取当前弹窗状态: idle | active | ready | closed */
+        getState() {
+            var modalEl = document.getElementById('securityConfirmModal');
+            return {
+                state: _state,
+                activeSessionId: _activeSessionId,
+                lastCheck: _lastCheck ? { ..._lastCheck } : null,
+                modalVisible: modalEl ? modalEl.classList.contains('visible') : false
+            };
+        },
+
+        /** 一键诊断：打印所有可检测性信息到控制台 */
+        inspect() {
+            console.group('%c🔍 DCM v3.2 诊断报告', 'font-size:14px;font-weight:bold;color:#00bcd4;');
+            console.log('%c📌 状态 (data-dcm-state):', 'font-weight:bold;', _state);
+            console.log('%c📌 活跃会话:', 'font-weight:bold;', _activeSessionId || '(无)');
+            console.log('%c📌 弹窗可见:', 'font-weight:bold;',
+                document.getElementById('securityConfirmModal')?.classList.contains('visible'));
+
+            console.group('%c🗂 data-* 属性', 'font-weight:bold;');
+            var m = document.getElementById('securityConfirmModal');
+            var cb = document.getElementById('secConfirmBtn');
+            var cw = document.getElementById('secCountdown');
+            var dg = document.getElementById('secDmgGrid');
+            var cp = document.getElementById('secCmdText');
+            console.table({
+                'data-dcm-state':  m ? m.getAttribute('data-dcm-state') : '(无元素)',
+                'data-dcm-ready':  cb ? cb.getAttribute('data-dcm-ready') : '(无元素)',
+                'data-dcm-cd-total': cw ? cw.getAttribute('data-dcm-cd-total') : '(无元素)',
+                'data-dcm-cd-left':  cw ? cw.getAttribute('data-dcm-cd-left') : '(无元素)',
+                'data-dcm-impacts':  dg ? dg.getAttribute('data-dcm-impacts') : '(无元素)',
+                'data-dcm-cmd':      cp ? cp.getAttribute('data-dcm-cmd') : '(无元素)',
+            });
+            console.groupEnd();
+
+            console.group('%c📍 CSS 变量位置', 'font-weight:bold;');
+            var css = this.getCssVars();
+            if (css) {
+                console.table({
+                    '--dcm-modal-top':     css.top,
+                    '--dcm-modal-left':    css.left,
+                    '--dcm-modal-width':   css.width,
+                    '--dcm-modal-height':  css.height,
+                    '--dcm-dialog-top':    css.dialogTop,
+                    '--dcm-dialog-left':   css.dialogLeft,
+                    '--dcm-dialog-width':  css.dialogWidth,
+                    '--dcm-dialog-height': css.dialogHeight,
+                });
+            } else {
+                console.log('  (弹窗未打开，无位置信息)');
+            }
+            console.groupEnd();
+
+            console.group('%c📋 最近检测', 'font-weight:bold;');
+            var lc = this.getLastCheck();
+            if (lc) {
+                console.log('  命令:', lc.cmd);
+                console.log('  会话:', lc.sessionId);
+                console.log('  等级:', lc.rule.level);
+                console.log('  描述:', lc.rule.desc);
+                console.log('  时间:', new Date(lc.timestamp).toLocaleTimeString());
+            } else {
+                console.log('  (无)');
+            }
+            console.groupEnd();
+
+            console.groupEnd();
+        },
+
+        /** 获取最近一次检测的命令 */
+        getLastCheck() {
+            return _lastCheck ? { ..._lastCheck } : null;
+        },
+
+        /** 获取所有规则 */
+        getRules() {
+            return DCM.getRules();
+        },
+
+        /** 纯检测命令（不触发任何动作） */
+        testCommand(cmd) {
+            const rule = DCM._matchRule(cmd);
+            if (!rule) return { safe: true, matched: null };
+            return {
+                safe: false,
+                matched: {
+                    level: rule.level,
+                    description: rule.desc,
+                    suggestion: rule.sugg
+                },
+                impacts: DCM._analyzeImpact(cmd),
+                category: DCM._guessCategory(rule.desc),
+                highlighted: DCM._highlightCmd(cmd, rule)
+            };
+        },
+
+        /** 强制关闭弹窗 */
+        forceClose() {
+            const modal = document.getElementById('securityConfirmModal');
+            if (modal && _state !== 'idle' && _state !== 'closed') {
+                DCM._clearTimer();
+                _setState('closed');
+                if (window.App) window.App.closeModal('securityConfirmModal');
+                _setState('idle');
+                _activeSessionId = null;
+                _dispatch('dcm:modal:close', { reason: 'force' });
+            }
+        },
+
+        /** 注册自定义事件监听器 */
+        on(eventName, handler) {
+            window.addEventListener(eventName, handler);
+        },
+
+        /** 取消注册自定义事件监听器 */
+        off(eventName, handler) {
+            window.removeEventListener(eventName, handler);
+        },
+
+        /** 列出所有可用事件名称 */
+        listEvents() {
+            return [
+                'dcm:modal:open',       // 弹窗打开时
+                'dcm:modal:confirm',    // 用户确认执行时
+                'dcm:modal:cancel',     // 用户取消时
+                'dcm:modal:close',      // 弹窗关闭时（所有关闭路径：confirm/cancel/timeout/overlay/force）
+                'dcm:modal:timeout',    // 60秒超时关闭时
+                'dcm:countdown:tick',   // 倒计时每秒触发（detail.remaining, detail.total）
+                'dcm:countdown:done',   // 倒计时结束，确认按钮变为可用
+                'dcm:command:blocked',  // Critical 级别命令被阻止
+                'dcm:command:warned',   // Medium 级别命令触发警告
+            ];
+        },
+
+        /** CSS 变量快照：获取弹窗当前 CSS 变量值 */
+        getCssVars() {
+            const modal = document.getElementById('securityConfirmModal');
+            if (!modal) return null;
+            const style = getComputedStyle(modal);
+            return {
+                top: style.getPropertyValue('--dcm-modal-top'),
+                left: style.getPropertyValue('--dcm-modal-left'),
+                width: style.getPropertyValue('--dcm-modal-width'),
+                height: style.getPropertyValue('--dcm-modal-height'),
+                dialogTop: style.getPropertyValue('--dcm-dialog-top'),
+                dialogLeft: style.getPropertyValue('--dcm-dialog-left'),
+                dialogWidth: style.getPropertyValue('--dcm-dialog-width'),
+                dialogHeight: style.getPropertyValue('--dcm-dialog-height'),
+            };
+        },
+
+        /** DOM data-* 属性快照 */
+        getDataAttrs() {
+            const modal = document.getElementById('securityConfirmModal');
+            const confirmBtn = document.getElementById('secConfirmBtn');
+            const cdWrap = document.getElementById('secCountdown');
+            const dmgGrid = document.getElementById('secDmgGrid');
+            const cmdPreview = document.getElementById('secCmdText');
+            return {
+                modalState: modal ? modal.getAttribute('data-dcm-state') : null,
+                confirmReady: confirmBtn ? confirmBtn.getAttribute('data-dcm-ready') : null,
+                cdTotal: cdWrap ? cdWrap.getAttribute('data-dcm-cd-total') : null,
+                cdLeft: cdWrap ? cdWrap.getAttribute('data-dcm-cd-left') : null,
+                impacts: dmgGrid ? dmgGrid.getAttribute('data-dcm-impacts') : null,
+                cmdText: cmdPreview ? cmdPreview.getAttribute('data-dcm-cmd') : null,
+            };
+        },
+    };
 
 })();

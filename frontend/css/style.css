@@ -3305,73 +3305,89 @@ body {
 ══════════════════════════════════════════ */
 
 /* ============================================================
-   高危命令安全确认弹窗
-   核心策略：独立的 fixed backdrop + top:50%/left:50% + transform:translate(-50%,-50%)
-   CSS 原生居中，无 JS 计算 left/top，零时序隐患
+   高危命令安全确认弹窗 v4.0
+   策略：独立 fixed 全屏 + flexbox 居中 + 玻璃拟态 + 发光边框
    ============================================================ */
 
-/* ── 遮罩层：独立 fixed 元素 ── */
-#securityConfirmBackdrop {
+/* ═══ 显式全屏居中（不依赖 .modal 基类，任何环境都稳定居中） ═══ */
+#securityConfirmModal {
+    position: fixed !important;
+    inset: 0 !important;
+    z-index: 2000 !important;
     display: none;
-    position: fixed;
-    top: 0; left: 0;
-    width: 100vw;
-    height: 100vh;
-    background: rgba(0,0,0,0.65);
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
-    z-index: 2000;
-    pointer-events: auto;
+    align-items: center;
+    justify-content: center;
+    margin: 0 !important;
+    padding: 16px !important;
+    box-sizing: border-box;
+}
+#securityConfirmModal.visible {
+    display: flex !important;
 }
 
-/* ── 对话框卡片：CSS transform 居中，彻底不再需要 JS 计算 left/top ── */
-#securityConfirmModal {
-    display: none;
-    position: fixed !important;
-    top: 50% !important;
-    left: 50% !important;
-    transform: translate(-50%, -50%) !important;
-    z-index: 2001 !important;
-    width: 560px;
-    max-width: 94vw;
-    max-height: 88vh;
+/* ═══ 玻璃拟态遮罩 ═══ */
+#securityConfirmModal .modal-overlay {
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(ellipse at center,
+        rgba(0,0,0,0.55) 0%,
+        rgba(0,0,0,0.78) 100%);
+    backdrop-filter: blur(14px) saturate(0.5);
+    -webkit-backdrop-filter: blur(14px) saturate(0.5);
+    z-index: 0;
+}
+
+/* ═══ 对话框主体：玻璃拟态 + 危险发光边框 ═══ */
+#securityConfirmModal .sec-dialog {
+    position: relative;
+    z-index: 1;
+    width: 540px;
+    max-width: calc(100vw - 32px);
+    max-height: calc(100vh - 32px);
     min-width: 360px;
-    min-height: 400px;
-    margin: 0 !important;
+    min-height: 360px;
     overflow: hidden;
-    background: var(--bg-secondary);
-    border-radius: 20px;
-    border: 1px solid rgba(244,67,54,0.12);
-    box-shadow:
-        0 0 0 1px rgba(0,0,0,0.08),
-        0 4px 10px rgba(0,0,0,0.12),
-        0 18px 45px -10px rgba(0,0,0,0.5),
-        0 40px 80px -24px rgba(0,0,0,0.4);
+    display: flex;
     flex-direction: column;
-    align-items: initial;
-    justify-content: initial;
+    border-radius: 20px;
+    background:
+        linear-gradient(160deg,
+            rgba(30,30,42,0.96) 0%,
+            rgba(20,20,32,0.98) 50%,
+            rgba(16,16,26,0.99) 100%);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    border: 1.5px solid rgba(244,67,54,0.25);
+    box-shadow:
+        0 0 0 1px rgba(0,0,0,0.3),
+        0 0 50px -12px rgba(244,67,54,0.2),
+        0 0 100px -30px rgba(244,67,54,0.1),
+        0 8px 32px rgba(0,0,0,0.5),
+        0 24px 80px rgba(0,0,0,0.6);
+    animation: secDialogIn 0.35s cubic-bezier(0.22, 0.61, 0.36, 1);
 }
 
 @keyframes secDialogIn {
-    0%   { opacity: 0; transform: translate(-50%, -50%) scale(0.92); }
-    100% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+    from { opacity: 0; transform: translateY(30px) scale(0.92); }
+    to   { opacity: 1; transform: translateY(0) scale(1); }
 }
 
-/* ── 头部 ── */
+/* ═══ 头部（渐变危险背景 + 中心图标） ═══ */
 #securityConfirmModal .sec-hd {
     position: relative;
+    z-index: 1;
     text-align: center;
-    padding: 36px 28px 22px;
+    padding: 34px 28px 20px;
     background: linear-gradient(180deg,
-        rgba(244,67,54,0.09) 0%,
-        rgba(244,67,54,0.03) 60%,
+        rgba(244,67,54,0.12) 0%,
+        rgba(244,67,54,0.04) 55%,
         transparent 100%);
-    border-bottom: 1px solid rgba(244,67,54,0.10);
+    border-bottom: 1px solid rgba(244,67,54,0.08);
     flex-shrink: 0;
     overflow: hidden;
 }
 
-/* 头部微妙的扫描线装饰 */
+/* 顶部扫描线 */
 #securityConfirmModal .sec-hd::before {
     content: '';
     position: absolute;
@@ -3379,17 +3395,23 @@ body {
     height: 1px;
     background: linear-gradient(90deg,
         transparent 0%,
-        rgba(244,67,54,0.3) 20%,
-        rgba(244,67,54,0.5) 50%,
-        rgba(244,67,54,0.3) 80%,
+        rgba(244,67,54,0.4) 15%,
+        rgba(244,67,54,0.6) 50%,
+        rgba(244,67,54,0.4) 85%,
         transparent 100%);
+    animation: secScanLine 3s ease-in-out infinite;
 }
 
-/* ── 旋转光环图标 ── */
+@keyframes secScanLine {
+    0%, 100% { opacity: 0.5; }
+    50%      { opacity: 1; }
+}
+
+/* ═══ 中心危险图标（脉冲光环） ═══ */
 #securityConfirmModal .sec-hd-ring {
-    width: 84px;
-    height: 84px;
-    margin: 0 auto 18px;
+    width: 80px;
+    height: 80px;
+    margin: 0 auto 16px;
     position: relative;
     display: flex;
     align-items: center;
@@ -3397,42 +3419,43 @@ body {
 }
 
 #securityConfirmModal .sec-hd-core {
-    width: 60px;
-    height: 60px;
+    width: 56px;
+    height: 56px;
     border-radius: 50%;
-    background: linear-gradient(140deg, #f44336, #c62828);
+    background: linear-gradient(140deg, #ef4444, #b91c1c);
     display: flex;
     align-items: center;
     justify-content: center;
     box-shadow:
-        0 0 30px rgba(244,67,54,0.4),
-        inset 0 1px 0 rgba(255,255,255,0.15);
+        0 0 40px rgba(239,68,68,0.5),
+        0 0 80px rgba(239,68,68,0.2),
+        inset 0 1px 0 rgba(255,255,255,0.2);
     z-index: 2;
     position: relative;
     animation: secPulse 2.2s ease-in-out infinite;
 }
 
 #securityConfirmModal .sec-hd-core i {
-    font-size: 24px;
+    font-size: 22px;
     color: #fff;
-    filter: drop-shadow(0 2px 3px rgba(0,0,0,0.35));
+    filter: drop-shadow(0 2px 4px rgba(0,0,0,0.4));
 }
 
 @keyframes secPulse {
     0%, 100% {
-        box-shadow: 0 0 18px rgba(244,67,54,0.25), inset 0 1px 0 rgba(255,255,255,0.15);
+        box-shadow: 0 0 30px rgba(239,68,68,0.35), 0 0 60px rgba(239,68,68,0.15), inset 0 1px 0 rgba(255,255,255,0.2);
         transform: scale(1);
     }
     50% {
-        box-shadow: 0 0 50px rgba(244,67,54,0.7), inset 0 1px 0 rgba(255,255,255,0.15);
-        transform: scale(1.04);
+        box-shadow: 0 0 55px rgba(239,68,68,0.7), 0 0 110px rgba(239,68,68,0.35), inset 0 1px 0 rgba(255,255,255,0.2);
+        transform: scale(1.05);
     }
 }
 
 /* SVG 旋转光环 */
 #securityConfirmModal .sec-hd-svg {
     position: absolute;
-    inset: -6px;
+    inset: -8px;
     width: 96px;
     height: 96px;
     animation: secRingSpin 9s linear infinite;
@@ -3441,16 +3464,16 @@ body {
 
 #securityConfirmModal .sec-hd-track {
     fill: none;
-    stroke: rgba(244,67,54,0.08);
-    stroke-width: 2.5;
+    stroke: rgba(244,67,54,0.06);
+    stroke-width: 2;
 }
 
 #securityConfirmModal .sec-hd-arc {
     fill: none;
-    stroke: rgba(244,67,54,0.55);
-    stroke-width: 2.5;
+    stroke: rgba(244,67,54,0.5);
+    stroke-width: 2;
     stroke-linecap: round;
-    stroke-dasharray: 180 109;
+    stroke-dasharray: 80 209;
     stroke-dashoffset: 0;
 }
 
@@ -3461,29 +3484,33 @@ body {
 
 /* 标题 */
 #securityConfirmModal .sec-hd-title {
-    font-size: 19px;
+    font-size: 18px;
     font-weight: 700;
-    color: var(--text-bright);
+    color: #fff;
     margin: 0 0 6px;
-    letter-spacing: 0.2px;
+    letter-spacing: 0.3px;
+    text-shadow: 0 1px 3px rgba(0,0,0,0.3);
 }
 
 #securityConfirmModal .sec-hd-sub {
-    font-size: 13px;
-    color: var(--text-secondary);
+    font-size: 12.5px;
+    color: rgba(255,255,255,0.5);
     margin: 0;
     font-weight: 400;
     line-height: 1.5;
-    opacity: 0.85;
+    opacity: 1;
 }
 
-/* ── 主体内容区（可滚动 + 自定义滚动条） ── */
+/* ── 主体内容区 ── */
 #securityConfirmModal .sec-bd {
-    padding: 22px 28px 18px;
+    position: relative;
+    z-index: 1;
+    padding: 20px 28px 16px;
     overflow-y: auto;
     flex: 1 1 auto;
     min-height: 0;
     scroll-behavior: smooth;
+    background: rgba(0,0,0,0.15);
 }
 
 #securityConfirmModal .sec-bd::-webkit-scrollbar {
@@ -3493,7 +3520,7 @@ body {
     background: transparent;
 }
 #securityConfirmModal .sec-bd::-webkit-scrollbar-thumb {
-    background: var(--border-color);
+    background: rgba(255,255,255,0.08);
     border-radius: 10px;
 }
 #securityConfirmModal .sec-bd::-webkit-scrollbar-thumb:hover {
@@ -3504,192 +3531,187 @@ body {
 #securityConfirmModal .sec-badge-row {
     display: flex;
     align-items: center;
-    gap: 12px;
-    margin-bottom: 18px;
+    gap: 10px;
+    margin-bottom: 16px;
 }
 
 #securityConfirmModal .sec-badge {
     display: inline-flex;
     align-items: center;
-    gap: 7px;
-    padding: 6px 16px 6px 11px;
-    border-radius: 22px;
-    font-size: 12px;
+    gap: 6px;
+    padding: 5px 14px;
+    border-radius: 50px;
+    font-size: 11px;
     font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.7px;
+    letter-spacing: 1px;
     line-height: 1;
 }
 
 #securityConfirmModal .sec-badge.high {
-    background: rgba(244,67,54,0.12);
-    color: #ef5350;
-    border: 1px solid rgba(244,67,54,0.22);
+    background: rgba(244,67,54,0.15);
+    color: #f87171;
+    border: 1px solid rgba(244,67,54,0.3);
 }
 
 #securityConfirmModal .sec-badge.critical {
-    background: rgba(198,40,40,0.2);
-    color: #ff5252;
-    border: 1px solid rgba(198,40,40,0.45);
+    background: rgba(185,28,28,0.25);
+    color: #fca5a5;
+    border: 1px solid rgba(220,38,38,0.5);
     animation: secBadgeFlash 1.6s ease-in-out infinite;
 }
 
 @keyframes secBadgeFlash {
-    0%, 100% { box-shadow: 0 0 0 0 rgba(244,67,54,0.3); }
-    50%      { box-shadow: 0 0 18px 4px rgba(244,67,54,0.15); }
+    0%, 100% { box-shadow: 0 0 6px 1px rgba(239,68,68,0.2); }
+    50%      { box-shadow: 0 0 20px 5px rgba(239,68,68,0.3); }
 }
 
 #securityConfirmModal .sec-badge.medium {
-    background: rgba(255,167,38,0.1);
-    color: #ffa726;
-    border: 1px solid rgba(255,167,38,0.25);
+    background: rgba(251,146,60,0.12);
+    color: #fb923c;
+    border: 1px solid rgba(251,146,60,0.25);
 }
 
 #securityConfirmModal .sec-category {
     font-size: 12px;
-    color: var(--text-secondary);
+    color: rgba(255,255,255,0.35);
     font-weight: 500;
-    opacity: 0.8;
+    opacity: 1;
 }
 
 /* ── 命令展示区 ── */
 #securityConfirmModal .sec-cmd-block {
-    margin-bottom: 18px;
-    background: var(--bg-tertiary);
-    border: 1px solid var(--border-color);
-    border-radius: 12px;
+    margin-bottom: 14px;
+    background: rgba(0,0,0,0.3);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 10px;
     overflow: hidden;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
 }
 
 #securityConfirmModal .sec-cmd-hd {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 9px 16px;
-    font-size: 11px;
+    padding: 8px 14px;
+    font-size: 10px;
     font-weight: 600;
-    color: var(--text-secondary);
-    background: var(--bg-hover);
-    border-bottom: 1px solid var(--border-color);
+    color: rgba(255,255,255,0.3);
+    background: rgba(0,0,0,0.2);
     text-transform: uppercase;
-    letter-spacing: 0.6px;
+    letter-spacing: 0.8px;
+    border-bottom: none;
 }
 
 #securityConfirmModal .sec-cmd-hd i {
-    font-size: 12px;
-    color: var(--accent-color);
+    font-size: 11px;
+    color: #60a5fa;
 }
 
 #securityConfirmModal .sec-cmd-wrap {
     display: flex;
     align-items: flex-start;
-    padding: 15px 18px;
-    font-family: var(--font-mono, 'Cascadia Code', 'Fira Code', Consolas, 'Courier New', monospace);
+    padding: 14px 16px;
+    gap: 10px;
+    font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', monospace;
     font-size: 13px;
-    background: var(--bg-primary);
-    min-height: 48px;
+    min-height: 44px;
 }
 
 #securityConfirmModal .sec-cmd-ps {
-    color: #4caf50;
-    font-size: 15px;
+    color: #4ade80;
+    font-size: 14px;
     font-weight: 700;
-    margin-right: 12px;
     flex-shrink: 0;
     user-select: none;
     line-height: 1;
     padding-top: 1px;
+    opacity: 0.9;
 }
 
 #securityConfirmModal .sec-cmd-txt {
     font-size: 13px;
-    color: var(--text-bright);
+    color: #e2e8f0;
     word-break: break-all;
-    line-height: 1.7;
+    line-height: 1.6;
     flex: 1;
 }
 
 #securityConfirmModal .sec-cmd-txt .cmd-hl {
-    background: rgba(244,67,54,0.2);
-    color: #ff6e6e;
-    padding: 2px 7px;
+    background: rgba(239,68,68,0.25);
+    color: #fca5a5;
+    padding: 2px 6px;
     border-radius: 4px;
-    font-weight: 700;
-    border-left: 3px solid rgba(244,67,54,0.7);
+    font-weight: 600;
+    border-left: 3px solid rgba(239,68,68,0.7);
     display: inline;
 }
 
 #securityConfirmModal .sec-cmd-txt .cmd-path {
-    color: var(--warning-color);
+    color: #fbbf24;
     font-weight: 600;
-    background: rgba(255,167,38,0.1);
-    padding: 2px 7px;
+    background: rgba(251,191,36,0.12);
+    padding: 2px 6px;
     border-radius: 4px;
 }
 
 /* ── 影响分析面板 ── */
 #securityConfirmModal .sec-dmg {
-    margin-bottom: 18px;
-    background: linear-gradient(135deg,
-        rgba(244,67,54,0.04) 0%,
-        rgba(244,67,54,0.02) 50%,
-        transparent 100%);
-    border: 1px solid rgba(244,67,54,0.10);
-    border-radius: 12px;
-    padding: 14px 18px;
+    margin-bottom: 14px;
+    background: rgba(244,67,54,0.04);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 10px;
+    padding: 12px 16px;
 }
 
 #securityConfirmModal .sec-dmg-title {
-    font-size: 11px;
+    font-size: 10px;
     text-transform: uppercase;
-    letter-spacing: 0.6px;
-    color: var(--text-secondary);
-    margin-bottom: 12px;
+    letter-spacing: 0.8px;
+    color: rgba(255,255,255,0.35);
+    margin-bottom: 10px;
     display: flex;
     align-items: center;
-    gap: 7px;
+    gap: 6px;
     font-weight: 600;
 }
 
 #securityConfirmModal .sec-dmg-grid {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
-    gap: 8px;
+    gap: 6px;
 }
 
 #securityConfirmModal .sec-dmg-item {
     display: flex;
     align-items: center;
-    gap: 7px;
-    padding: 9px 12px;
+    gap: 6px;
+    padding: 8px 10px;
     border-radius: 8px;
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 500;
     transition: all 0.2s ease;
 }
 
 #securityConfirmModal .sec-dmg-item.active {
-    background: rgba(244,67,54,0.09);
-    border: 1px solid rgba(244,67,54,0.17);
-    color: var(--text-bright);
-    box-shadow: 0 1px 4px rgba(244,67,54,0.06);
+    background: rgba(239,68,68,0.1);
+    border: 1px solid rgba(239,68,68,0.2);
+    color: #fca5a5;
 }
 
 #securityConfirmModal .sec-dmg-item.inactive {
-    opacity: 0.32;
-    color: var(--text-secondary);
-    background: var(--bg-hover);
+    opacity: 0.2;
+    color: rgba(255,255,255,0.25);
+    background: rgba(255,255,255,0.02);
 }
 
 #securityConfirmModal .sec-dmg-item .sec-dmg-icon {
-    font-size: 14px;
+    font-size: 12px;
     flex-shrink: 0;
-    width: 18px;
+    width: 16px;
     text-align: center;
 }
 #securityConfirmModal .sec-dmg-item.active .sec-dmg-icon {
-    color: #ef5350;
+    color: #ef4444;
 }
 
 @media (max-width: 480px) {
@@ -3700,31 +3722,31 @@ body {
 
 /* ── 详情描述 ── */
 #securityConfirmModal .sec-infos {
-    margin-bottom: 16px;
-    background: var(--bg-tertiary);
-    border: 1px solid var(--border-color);
-    border-radius: 12px;
-    padding: 6px 16px;
+    margin-bottom: 12px;
+    background: rgba(0,0,0,0.2);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 10px;
+    padding: 4px 14px;
 }
 
 #securityConfirmModal .sec-info {
     display: flex;
     align-items: flex-start;
-    gap: 12px;
-    padding: 12px 0;
-    border-bottom: 1px solid var(--border-color);
+    gap: 10px;
+    padding: 11px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
 }
 #securityConfirmModal .sec-info:last-child {
     border-bottom: none;
-    padding-bottom: 13px;
+    padding-bottom: 12px;
 }
 
 #securityConfirmModal .sec-info > i {
-    font-size: 15px;
-    color: var(--text-secondary);
+    font-size: 14px;
+    color: rgba(255,255,255,0.3);
     margin-top: 1px;
     flex-shrink: 0;
-    width: 18px;
+    width: 16px;
     text-align: center;
 }
 
@@ -3732,40 +3754,40 @@ body {
     display: block;
     font-size: 10px;
     font-weight: 700;
-    color: var(--text-secondary);
+    color: rgba(255,255,255,0.3);
     text-transform: uppercase;
     letter-spacing: 0.6px;
-    margin-bottom: 4px;
+    margin-bottom: 3px;
 }
 
 #securityConfirmModal .sec-info-v {
-    font-size: 13px;
-    color: var(--text-bright);
+    font-size: 12.5px;
+    color: #cbd5e1;
     line-height: 1.55;
 }
 
 /* ── 倒计时 ── */
 #securityConfirmModal .sec-cd {
-    margin-top: 6px;
+    margin-top: 4px;
 }
 
 #securityConfirmModal .sec-cd-bar {
-    height: 4px;
-    background: rgba(255,255,255,0.06);
-    border-radius: 4px;
-    margin-bottom: 8px;
+    height: 5px;
+    background: rgba(255,255,255,0.04);
+    border-radius: 5px;
+    margin-bottom: 10px;
     overflow: hidden;
-    box-shadow: inset 0 1px 2px rgba(0,0,0,0.15);
+    box-shadow: inset 0 1px 3px rgba(0,0,0,0.3);
 }
 
 #securityConfirmModal .sec-cd-fill {
     height: 100%;
-    border-radius: 4px;
-    background: linear-gradient(90deg, #c62828, #ef5350, #ff7043);
+    border-radius: 5px;
+    background: linear-gradient(90deg, #dc2626, #ef4444, #f97316);
     background-size: 200% 100%;
     animation: secCdShimmer 1.5s ease-in-out infinite;
-    transition: width 0.3s linear;
-    box-shadow: 0 0 8px rgba(244,67,54,0.35);
+    transition: width 0.3s ease;
+    box-shadow: 0 0 12px rgba(239,68,68,0.45);
 }
 
 @keyframes secCdShimmer {
@@ -3774,69 +3796,75 @@ body {
 }
 
 #securityConfirmModal .sec-cd-txt {
-    font-size: 12px;
-    color: var(--text-secondary);
+    font-size: 11px;
+    color: rgba(255,255,255,0.35);
     display: flex;
     align-items: center;
     gap: 5px;
 }
 
 #securityConfirmModal .sec-cd-txt strong {
-    color: #ef5350;
-    font-size: 17px;
+    color: #f87171;
+    font-size: 16px;
     font-weight: 700;
-    min-width: 20px;
+    min-width: 18px;
     text-align: center;
     display: inline-block;
 }
 
 /* ── 底部按钮栏 ── */
 #securityConfirmModal .sec-ft {
+    position: relative;
+    z-index: 1;
     display: flex;
-    gap: 14px;
-    padding: 18px 28px 22px;
-    border-top: 1px solid var(--border-color);
+    gap: 12px;
+    padding: 16px 28px 20px;
+    border-top: 1px solid rgba(255,255,255,0.06);
     flex-shrink: 0;
-    background: var(--bg-tertiary);
+    background: rgba(0,0,0,0.25);
 }
 
 #securityConfirmModal .sec-ft button {
     flex: 1;
-    padding: 13px 18px;
-    font-size: 14px;
+    padding: 12px 16px;
+    font-size: 13.5px;
     font-weight: 600;
     border-radius: 12px;
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 8px;
+    gap: 7px;
     cursor: pointer;
-    transition: all 0.2s ease;
+    transition: all 0.25s ease;
     border: none;
     font-family: inherit;
-    letter-spacing: 0.3px;
+    letter-spacing: 0.2px;
     position: relative;
     overflow: hidden;
 }
 
 /* 取消按钮 */
 #securityConfirmModal .sec-btn-ccl {
-    background: var(--bg-hover);
-    color: var(--text-primary);
-    border: 1px solid var(--border-color);
+    background: rgba(255,255,255,0.06);
+    color: #cbd5e1;
+    border: 1px solid rgba(255,255,255,0.1);
 }
 #securityConfirmModal .sec-btn-ccl:hover {
-    background: var(--bg-active);
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    background: rgba(255,255,255,0.1);
+    color: #fff;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.2);
 }
 
 /* 确认按钮 */
 #securityConfirmModal .sec-btn-ok {
-    background: linear-gradient(135deg, #d32f2f 0%, #b71c1c 100%);
+    background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);
     color: #fff;
-    box-shadow: 0 4px 18px rgba(211,47,47,0.35);
+    box-shadow:
+        0 4px 20px rgba(220,38,38,0.45),
+        0 0 40px rgba(220,38,38,0.15);
     font-weight: 700;
+    border: 1px solid rgba(255,255,255,0.1);
 }
 #securityConfirmModal .sec-btn-ok::after {
     content: '';
@@ -3844,32 +3872,33 @@ body {
     inset: 0;
     background: linear-gradient(135deg,
         rgba(255,255,255,0) 0%,
-        rgba(255,255,255,0.05) 40%,
-        rgba(255,255,255,0.1) 50%,
+        rgba(255,255,255,0.06) 40%,
+        rgba(255,255,255,0.12) 50%,
         rgba(255,255,255,0) 60%);
     pointer-events: none;
 }
 #securityConfirmModal .sec-btn-ok:hover:not(:disabled) {
-    background: linear-gradient(135deg, #c62828 0%, #a11414 100%);
+    background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
     transform: translateY(-2px);
-    box-shadow: 0 8px 28px rgba(211,47,47,0.5);
+    box-shadow:
+        0 6px 30px rgba(239,68,68,0.5),
+        0 0 60px rgba(239,68,68,0.2);
 }
 #securityConfirmModal .sec-btn-ok:active:not(:disabled) {
     transform: translateY(0);
-    box-shadow: 0 3px 10px rgba(211,47,47,0.25);
-    transition: all 0.08s ease;
+    box-shadow: 0 3px 12px rgba(220,38,38,0.3);
+    transition: all 0.05s ease;
 }
 #securityConfirmModal .sec-btn-ok:disabled {
-    opacity: 0.45;
+    opacity: 0.4;
     cursor: not-allowed;
-    filter: grayscale(50%);
+    filter: grayscale(60%);
     transform: none !important;
     box-shadow: none !important;
 }
 
 /* ════════════════════════════════════════════════════════════
-   高危命令确认弹窗 - 强制居中修复（覆盖所有内联样式）
-   v310 防御性追加层
+   高危命令确认弹窗 — 防御层（v4.0）
    ════════════════════════════════════════════════════════════ */
 
 /* 弹窗打开时禁止页面滚动 */
@@ -3877,78 +3906,58 @@ body.modal-open {
     overflow: hidden !important;
 }
 
-#securityConfirmBackdrop {
-    display: none !important;
-    position: fixed !important;
-    top: 0 !important;
-    left: 0 !important;
-    width: 100vw !important;
-    height: 100vh !important;
-    background: rgba(0,0,0,0.65) !important;
-    backdrop-filter: blur(8px) !important;
-    -webkit-backdrop-filter: blur(8px) !important;
-    z-index: 2000 !important;
-    pointer-events: auto !important;
-}
-
-#securityConfirmBackdrop.visible {
-    display: block !important;
-}
-
-#securityConfirmModal {
-    display: none !important;
-    position: fixed !important;
-    top: 50% !important;
-    left: 50% !important;
-    transform: translate(-50%, -50%) !important;
-    z-index: 2001 !important;
-    width: 560px !important;
-    max-width: 94vw !important;
-    max-height: 88vh !important;
-    min-width: 360px !important;
-    min-height: 400px !important;
-    margin: 0 !important;
-    overflow: hidden !important;
-    background: var(--bg-secondary) !important;
-    border-radius: 20px !important;
-    border: 1px solid rgba(244,67,54,0.12) !important;
-    box-shadow:
-        0 0 0 1px rgba(0,0,0,0.08),
-        0 4px 10px rgba(0,0,0,0.12),
-        0 18px 45px -10px rgba(0,0,0,0.5),
-        0 40px 80px -24px rgba(0,0,0,0.4) !important;
-    flex-direction: column !important;
-    align-items: initial !important;
-    justify-content: initial !important;
-    animation: secDialogIn 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
-}
-
-#securityConfirmModal.visible {
-    display: flex !important;
-}
-
-/* 当遮罩显示时，确保弹窗可见（兄弟选择器兜底） */
-#securityConfirmBackdrop.visible ~ #securityConfirmModal,
-#securityConfirmBackdrop.visible + #securityConfirmModal {
-    display: flex !important;
-}
-
 /* 小屏适配 */
 @media (max-width: 480px) {
     #securityConfirmModal {
-        width: 94vw !important;
-        max-width: 94vw !important;
+        padding: 6px !important;
+    }
+    #securityConfirmModal .sec-dialog {
+        width: 100% !important;
+        max-width: 100% !important;
         min-width: unset !important;
-        min-height: 360px !important;
-        max-height: 92vh !important;
-        border-radius: 16px !important;
+        min-height: 300px !important;
+        max-height: calc(100vh - 12px) !important;
+        border-radius: 14px !important;
+    }
+    #securityConfirmModal .sec-hd {
+        padding: 22px 20px 14px;
+    }
+    #securityConfirmModal .sec-bd {
+        padding: 14px 18px 12px;
+    }
+    #securityConfirmModal .sec-ft {
+        padding: 12px 18px 16px;
+        gap: 10px;
     }
 }
 
 @media (max-height: 600px) {
-    #securityConfirmModal {
-        max-height: 92vh !important;
-        min-height: 300px !important;
+    #securityConfirmModal .sec-dialog {
+        max-height: calc(100vh - 12px) !important;
+        min-height: 260px !important;
+    }
+    #securityConfirmModal .sec-hd {
+        padding: 16px 24px 12px;
+    }
+    #securityConfirmModal .sec-hd-ring {
+        width: 50px;
+        height: 50px;
+        margin-bottom: 8px;
+    }
+    #securityConfirmModal .sec-hd-core {
+        width: 36px;
+        height: 36px;
+    }
+    #securityConfirmModal .sec-hd-core i {
+        font-size: 15px;
+    }
+    #securityConfirmModal .sec-hd-svg {
+        width: 62px;
+        height: 62px;
     }
 }
+
+
+
+
 
